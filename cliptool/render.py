@@ -74,7 +74,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None) -> str:
     W, H = SIZES[aspect]
-    if aspect == "vertical" and fit == "crop" and x is not None:
+    if aspect == "vertical" and fit == "pan":
+        # pan.cmd (written next to the clip) moves the crop window frame by frame.
+        chain = f"[0:v]scale=-2:{H},sendcmd=f=pan.cmd,crop@pan={W}:{H}:{x or 0}:0,setsar=1"
+    elif aspect == "vertical" and fit == "crop" and x is not None:
         chain = f"[0:v]scale=-2:{H},crop={W}:{H}:{x}:0,setsar=1"
     elif aspect == "original":
         chain = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1"
@@ -108,11 +111,15 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     x = None
     used_fit = fit
     if aspect == "vertical" and fit == "auto":
-        from .framing import choose_framing, crop_x
+        from .framing import choose_framing, crop_x, pan_commands
 
-        used_fit, cx = choose_framing(source, start, dur)
+        plan = choose_framing(source, start, dur)
+        used_fit = plan["mode"]
         if used_fit == "crop":
-            x = crop_x(source, cx)
+            x = crop_x(source, plan["x"])
+        elif used_fit == "pan":
+            (clips_dir / "pan.cmd").write_text(pan_commands(source, plan["path"], dur), encoding="utf-8")
+            x = crop_x(source, plan["path"][0][1])
 
     enc = cfg["encode"]
     ffmpeg_run([
@@ -127,5 +134,6 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     ], cwd=clips_dir)
     ffmpeg_run(["-i", mp4.name, "-t", "3", "-vf", "thumbnail=40", "-frames:v", "1", "-q:v", "3", jpg.name], cwd=clips_dir)
     (clips_dir / "subs.ass").unlink(missing_ok=True)
+    (clips_dir / "pan.cmd").unlink(missing_ok=True)
     return {"file": f"clips/{mp4.name}", "thumbnail": f"clips/{jpg.name}",
             "framing": used_fit if aspect == "vertical" else aspect}

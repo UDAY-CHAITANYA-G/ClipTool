@@ -30,6 +30,7 @@ def clip_records(info: dict, clips: list[dict], sentences: list[dict]) -> list[d
             "reason": c["reason"],
             "file": c.get("file"),
             "thumbnail": c.get("thumbnail"),
+            "framing": c.get("framing"),
             "source_url": f"https://youtu.be/{vid}?t={int(c['start'])}",
             "transcript": window_text(sentences, c),
             "i": c["i"], "j": c["j"],

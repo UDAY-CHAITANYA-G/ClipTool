@@ -55,8 +55,12 @@ Results go to `output\<title>_<id>\`: `clips\*.mp4` + thumbnails, `clips.json`, 
    - **Pacing 0.15** — speech rate near the video's norm, clean sentence ending, no dead air.
 3. Overlapping windows are removed; the best N are rendered.
 4. Title = the clip's most quotable line; hook = its opening line; reason = which signals stood out.
-5. **Auto framing** finds the speaker's face (OpenCV) and crops on it; if faces jump around or there are none
-   (slides, wide shots), it uses the full frame over a blurred background so nothing is cut off.
+5. **Auto framing** samples each clip at 4 fps and maps where the faces and motion are, then picks:
+   - **Speaker crop** — one steady face: a fixed 9:16 crop centred on it;
+   - **Follows the action** — the moving subject fits in a 9:16 window: a smooth virtual camera pans with it;
+   - **Full frame** — the action is wider than 9:16 (gameplay, wide shots, a moving camera, slides): the whole
+     frame over a blurred background, so no context is cut off.
+   The website shows which one each clip used. `--fit crop` / `--fit blur` force a mode.
 
 Weights and caption style live in `config.toml`.
 

@@ -67,3 +67,26 @@ def test_ass_has_highlight():
 
 def test_slugify():
     assert slugify("What's the Deal?! 100%") == "what-s-the-deal-100"
+
+
+def test_best_window_follows_interest():
+    import numpy as np
+    from cliptool.framing import best_windows, smooth_path
+
+    prof = np.zeros((8, 100), dtype=np.float32)
+    for k in range(8):
+        prof[k, 10 + 8 * k: 20 + 8 * k] = 1.0  # a blob moving right
+    centres, cov, info = best_windows(prof, 30)
+    assert info.all() and (cov > 0.99).all()
+    path = smooth_path(centres, info, 30, 100)
+    assert path[-1] > path[0] and path.min() >= 15 and path.max() <= 85
+
+
+def test_pan_commands_format(tmp_path, monkeypatch):
+    from cliptool import framing
+
+    monkeypatch.setattr(framing, "video_size", lambda p: (1920, 1080))
+    cmd = framing.pan_commands(tmp_path / "x.mp4", [(0.0, 0.2), (2.0, 0.8)], 2.0)
+    first, last = cmd.splitlines()[0], cmd.splitlines()[-1]
+    assert first.startswith("0.000 crop@pan x ") and first.endswith(";")
+    assert int(last.split()[-1].rstrip(";")) > int(first.split()[-1].rstrip(";"))

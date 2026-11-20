@@ -110,7 +110,7 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
         <label>Format
           <select id="aspect"><option value="vertical">Vertical 9:16</option><option value="square">Square 1:1</option><option value="original">Original 16:9</option></select></label>
         <label>Framing
-          <select id="fit"><option value="auto">Auto (follow speaker)</option><option value="crop">Centre crop</option><option value="blur">Full frame + blur</option></select></label>
+          <select id="fit"><option value="auto">Auto (follow the action)</option><option value="crop">Centre crop</option><option value="blur">Full frame + blur</option></select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
       </div>
       <div class="msg" id="msg"></div>
@@ -148,6 +148,7 @@ const fmt = t => { t = Math.floor(t); const h = Math.floor(t/3600), m = Math.flo
   return (h ? h + ":" + String(m).padStart(2,"0") : m) + ":" + String(s).padStart(2,"0"); };
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let pollTimer = null, currentFolder = null;
+const FRAMING = { crop: "Speaker crop", pan: "Follows the action", blur: "Full frame (wide action)" };
 
 function setBusy(b){ $("go").disabled = b; $("go").textContent = b ? "Working..." : "Find clips"; }
 
@@ -206,7 +207,7 @@ function card(c, folder, aspect){
     <h3>${esc(c.title)}</h3>
     <p class="hook">“${esc(c.hook)}”</p>
     <p class="reason">${esc(c.reason)}</p>
-    <p class="meta"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${fmt(c.start)}–${fmt(c.end)}</a> · ${Math.round(c.duration)} s</p>
+    <p class="meta"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${fmt(c.start)}–${fmt(c.end)}</a> · ${Math.round(c.duration)} s${FRAMING[c.framing] ? " · " + FRAMING[c.framing] : ""}</p>
     <div class="chips">${sig}</div>
     <div class="actions">
       ${c.file ? `<a href="${base + esc(c.file)}?download=1">Download</a>` : ""}

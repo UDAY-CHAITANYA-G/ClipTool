@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ class Options:
     caption_style: str = "highlight"
     hook_intro: bool = False          # play the best 3-5 s of each clip first, then the clip
     speed: float = 1.0                # 0.5-2x playback speed for every clip (captions stay in sync)
+    preset: str | None = None         # one of your saved presets: its whole look goes on every clip
     ai: bool = False
     model: str | None = None
     lang: str = "en"
@@ -35,6 +37,20 @@ class Options:
     work: Path = field(default_factory=lambda: Path("work"))
     cookies_from_browser: str | None = None
     config: Path | None = None
+
+
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def key_lock(key: str) -> threading.RLock:
+    """One lock per key (a run folder, a clip, a video id) so parallel jobs don't trip over each other."""
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.RLock())
+
+
+def _run_key(run_dir: Path) -> str:
+    return "run:" + str(Path(run_dir).resolve()).lower()
 
 
 class Cancelled(Exception):
@@ -129,10 +145,37 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
             if default_imgs:
                 c["images"] = [dict(i) for i in default_imgs]
             c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
-        for k, c in enumerate(clips, 1):
-            at(f"Rendering clip {k} of {len(clips)}", 0.55 + 0.43 * (k - 1) / len(clips))
-            log(f"  {c['title']}")
-            c.update(render.render_clip(source, c, sentences, out_dir, k, o.aspect, o.fit, o.captions, cfg))
+        if o.preset:
+            from . import userpresets
+
+            ps = userpresets.get(o.preset)
+            if ps is None:
+                log(f"  preset '{o.preset}' not found - using the form's settings")
+            else:
+                log(f"  applying your preset '{o.preset}': {userpresets.summary(ps)}")
+                for c in clips:
+                    c.update(clean_changes(userpresets.changes_for_clip(ps, c, sentences, info, source),
+                                           info.get("duration") or 0))
+        # Render the clips side by side (render.RENDER_SLOTS caps how many encode at once overall).
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        at(f"Rendering {len(clips)} clips ({min(len(clips), render.RENDER_WORKERS)} at a time)", 0.55)
+        done = 0
+        with ThreadPoolExecutor(max_workers=max(1, min(len(clips), render.RENDER_WORKERS)),
+                                thread_name_prefix="cliptool-render") as pool:
+            futs = {pool.submit(render.render_clip, source, c, sentences, out_dir, k, c["aspect"], c["fit"],
+                                c["captions"], cfg): c for k, c in enumerate(clips, 1)}
+            try:
+                for f in as_completed(futs):
+                    c = futs[f]
+                    c.update(f.result())
+                    done += 1
+                    log(f"  rendered: {c['title']}")
+                    at(f"Rendered {done} of {len(clips)} clips", 0.55 + 0.43 * done / len(clips))
+            except BaseException:
+                for f in futs:
+                    f.cancel()
+                raise
 
     recs = report.clip_records(info, clips, sentences)
     settings = {"count": count, "min_seconds": min_s, "max_seconds": max_s,
@@ -386,8 +429,11 @@ def _remove_when_free(p: Path, tries: int = 5) -> None:
 def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None] = print,
               stage: Callable[[str, float], None] | None = None) -> dict:
     """Apply edits to one clip of a run and re-render just that clip."""
-    import json
+    with key_lock(f"{_run_key(run_dir)}#{rank}"):
+        return _edit_clip(run_dir, rank, changes, log, stage)
 
+
+def _edit_clip(run_dir, rank, changes, log, stage) -> dict:
     data, info, sentences, source = load_run(run_dir)
     clips = data["clips"]
     clip = next((c for c in clips if c["rank"] == rank), None)
@@ -420,13 +466,87 @@ def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None
             _remove_when_free(old)
     clip["aspect"], clip["fit"], clip["captions"] = aspect, fit, captions
 
-    recs = report.clip_records(info, clips, sentences)
-    report.write_json(run_dir, info, recs, settings)
-    report.write_html(run_dir, info, recs)
+    # Other clips of this run may have been saved while this one rendered: merge into the latest file.
+    with key_lock(_run_key(run_dir)):
+        latest, _, _, _ = load_run(run_dir)
+        clips = latest["clips"]
+        k = next((n for n, c in enumerate(clips) if c["rank"] == rank), None)
+        if k is None:
+            for old in (run_dir / "clips").glob(f"{rank:02d}_*"):
+                _remove_when_free(old)
+            raise ValueError(f"Clip #{rank} was deleted while it rendered.")
+        clips[k] = clip
+        recs = report.clip_records(info, clips, sentences)
+        report.write_json(run_dir, info, recs, latest["settings"])
+        report.write_html(run_dir, info, recs)
     if stage:
         stage("Done", 1.0)
     log("Done.")
     return {"folder": run_dir.name, "rank": rank, "clip": next(r for r in recs if r["rank"] == rank)}
+
+
+# ---- faster source -------------------------------------------------------------------------
+
+def source_info(run_dir: Path) -> dict:
+    from .ffmpeg import SLOW_CODECS, video_codec
+
+    _, _, _, source = load_run(run_dir)
+    codec = video_codec(source)
+    return {"codec": codec, "slow": codec in SLOW_CODECS, "size_mb": round(source.stat().st_size / 2 ** 20, 1)}
+
+
+def make_source_fast(run_dir: Path, log: Callable[[str], None] = print,
+                     stage: Callable[[str, float], None] | None = None) -> dict:
+    """Swap a run's AV1 download for the H.264 version (same timing, decodes far faster)."""
+    from .cache import Work
+    from .ffmpeg import SLOW_CODECS, video_codec
+
+    data, info, _, source = load_run(run_dir)
+    if video_codec(source) not in SLOW_CODECS:
+        return {"folder": run_dir.name, "codec": video_codec(source), "changed": False}
+    wd = Path(data["settings"]["work_dir"])
+    work = Work(wd.parent, wd.name)
+    url = info.get("webpage_url") or f"https://www.youtube.com/watch?v={info['id']}"
+    if stage:
+        stage("Downloading the H.264 version (renders get much faster)", 0.1)
+    log(f"Re-downloading {info.get('title')} as H.264 ...")
+    new = fetch.redownload_h264(url, work, log=log)
+    codec = video_codec(new)
+    dur_new = _duration(new)
+    if codec in SLOW_CODECS or abs(dur_new - float(info.get("duration") or dur_new)) > 2.0:
+        new.unlink(missing_ok=True)
+        raise RuntimeError("The new download doesn't match the original video; kept the old one.")
+    if stage:
+        stage("Swapping in the faster video", 0.95)
+    with key_lock("video:" + str(info.get("id"))):
+        old = source.with_name("source_av1_old" + source.suffix)
+        for _ in range(400):  # up to ~10 min: renders still reading the old file finish first
+            try:
+                source.replace(old)
+                break
+            except PermissionError:  # open by a render or the page's player: wait for it
+                time.sleep(1.5)
+        else:
+            new.unlink(missing_ok=True)
+            raise RuntimeError("The video is open somewhere (full-video view or a player). Close it and try again.")
+        new.replace(source.with_suffix(".mp4") if source.suffix != ".mp4" else source)
+        _remove_when_free(old)
+    log(f"Done: source is now {codec} ({round(source.stat().st_size / 2 ** 20)} MB).")
+    if stage:
+        stage("Done", 1.0)
+    return {"folder": run_dir.name, "codec": codec, "changed": True}
+
+
+def _duration(path: Path) -> float:
+    import re
+    import subprocess
+
+    from .ffmpeg import ffmpeg_exe
+
+    err = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stderr
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 0.0
 
 
 # ---- clips you pick yourself in the full video ------------------------------------------
@@ -434,10 +554,6 @@ def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None
 def add_clip(run_dir: Path, start: float, end: float, title: str | None = None,
              log: Callable[[str], None] = print, stage: Callable[[str, float], None] | None = None) -> dict:
     """Add a clip you chose in the full-video view to a run, with the run's usual look, and render it."""
-    import json
-
-    from .assets import with_defaults
-
     data, info, sentences, source = load_run(run_dir)
     duration = info.get("duration") or 0
     start, end = round(float(start), 2), round(float(end), 2)
@@ -447,6 +563,19 @@ def add_clip(run_dir: Path, start: float, end: float, title: str | None = None,
         raise ValueError("A clip must be 3-180 seconds long.")
     idx = [k for k, s in enumerate(sentences) if s["end"] > start and s["start"] < end] or [0]
     probe = {"start": start, "end": end, "i": idx[0], "j": idx[-1]}
+    lock = key_lock(_run_key(run_dir))
+    lock.acquire()
+    try:
+        data, info, sentences, source = load_run(run_dir)
+        rank_no = _append_manual_clip(run_dir, data, info, sentences, start, end, title, idx, probe)
+    finally:
+        lock.release()
+    return edit_clip(run_dir, rank_no, {}, log=log, stage=stage)
+
+
+def _append_manual_clip(run_dir, data, info, sentences, start, end, title, idx, probe) -> int:
+    from .assets import with_defaults
+
     clips = data["clips"]
     first = clips[0] if clips else {}
     rank_no = max([c["rank"] for c in clips], default=0) + 1
@@ -462,12 +591,17 @@ def add_clip(run_dir: Path, start: float, end: float, title: str | None = None,
     }
     clips.append(clip)
     report.write_json(run_dir, info, report.clip_records(info, clips, sentences), data["settings"])
-    log(f"Added clip #{rank_no}: {clip['title']} ({start:.1f}-{end:.1f}s)")
-    return edit_clip(run_dir, rank_no, {}, log=log, stage=stage)
+    print(f"Added clip #{rank_no}: {clip['title']} ({start:.1f}-{end:.1f}s)", flush=True)
+    return rank_no
 
 
 def delete_clip(run_dir: Path, rank_no: int) -> dict:
     """Remove one clip (its files and its entry) from a run."""
+    with key_lock(_run_key(run_dir)):
+        return _delete_clip(run_dir, rank_no)
+
+
+def _delete_clip(run_dir: Path, rank_no: int) -> dict:
     import json
 
     data = json.loads((run_dir / "clips.json").read_text(encoding="utf-8"))

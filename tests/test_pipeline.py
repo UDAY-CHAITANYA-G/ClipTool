@@ -351,3 +351,21 @@ def test_caption_words_range_offset_and_json3_timing(tmp_path):
     f.write_text(json.dumps(cap), encoding="utf-8")
     ws = words_from_json3(f)
     assert ws[1]["w"] == "rolling." and ws[1]["e"] <= 3.0
+
+
+def test_user_presets_roundtrip(tmp_path, monkeypatch):
+    from cliptool import userpresets as up
+
+    monkeypatch.setattr(up, "FILE", tmp_path / "user_presets.json")
+    look = {"aspect": "square", "fit": "blur", "style": {"preset": "vice", "position": "middle"},
+            "filters": {"contrast": 1.2}, "texts": [{"id": "t1", "text": "Follow", "start": 0, "end": 50}],
+            "images": [], "start": 10, "end": 20, "caption_text": "not kept", "hook_intro": {"on": True}}
+    saved = up.save("  My   look ", look)
+    assert saved["name"] == "My look"
+    s = up.get("My look")
+    assert s["aspect"] == "square" and s["fit"] == "blur" and s["hook_intro_auto"] is True
+    assert "start" not in s and "caption_text" not in s
+    ch = up.changes_for_clip({**s, "hook_intro_auto": False}, {"start": 100.0, "end": 120.0}, [], {}, None)
+    assert ch["texts"][0]["end"] == 20.0 and ch["hook_intro"] == {"on": False}
+    assert [p["name"] for p in up.list_all()] == ["My look"]
+    assert up.delete("My look") and up.get("My look") is None

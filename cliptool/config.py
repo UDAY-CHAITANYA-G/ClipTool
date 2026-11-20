@@ -23,7 +23,7 @@ DEFAULTS: dict = {
         "font": "Arial Black", "size": 78, "words_per_line": 3,
         "color": "#FFFFFF", "highlight": "#FFD400", "outline": 5, "margin_bottom": 520,
     },
-    "encode": {"crf": 20, "preset": "medium", "loudness_lufs": -14},
+    "encode": {"crf": 20, "preset": "faster", "loudness_lufs": -14},
     "ai": {"model": "claude-opus-5-5", "effort": "medium"},
 }
 

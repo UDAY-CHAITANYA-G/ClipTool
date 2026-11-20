@@ -111,6 +111,55 @@ def download_captions(url: str, info: dict, work: Work, lang: str, cookies_from_
     return None
 
 
+def _format(max_height: int, h264_only: bool = False) -> str:
+    h = max_height
+    avc = f"bv*[height<={h}][vcodec^=avc1]+ba[ext=m4a]/b[height<={h}][vcodec^=avc1]"
+    if h264_only:
+        return avc
+    return avc + f"/bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/bv*[height<={h}]+ba/b"
+
+
+def redownload_h264(url: str, work: Work, cookies_from_browser: str | None = None, max_height: int = 1080,
+                    log=print) -> Path:
+    """Fetch the H.264 version of a video next to the current source; returns its path (not yet swapped in)."""
+    import yt_dlp
+
+    for p in work.dir.glob("source_h264.*"):
+        p.unlink(missing_ok=True)
+    opts = _base_opts(cookies_from_browser) | {
+        "format": _format(max_height, h264_only=True),
+        "merge_output_format": "mp4",
+        "outtmpl": str(work.path("source_h264.%(ext)s")),
+        "quiet": True, "noprogress": True,
+        "logger": _Logger(log),
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+    for p in work.dir.glob("source_h264.*"):
+        if p.suffix == ".mp4" and p.stat().st_size > 0:
+            return p
+    raise RuntimeError("YouTube has no H.264 version of this video at this size.")
+
+
+class _Logger:
+    def __init__(self, log):
+        self.log = log
+
+    def debug(self, msg):
+        if msg.startswith("[download]") and "%" in msg and not msg.endswith("100%"):
+            return
+        self.log(msg)
+
+    def info(self, msg):
+        self.log(msg)
+
+    def warning(self, msg):
+        self.log("warning: " + msg)
+
+    def error(self, msg):
+        self.log("error: " + msg)
+
+
 def download_video(url: str, work: Work, cookies_from_browser: str | None = None, max_height: int = 1080) -> Path:
     for p in work.dir.glob("source.*"):
         if p.suffix in (".mp4", ".mkv", ".webm") and p.stat().st_size > 0:
@@ -118,7 +167,8 @@ def download_video(url: str, work: Work, cookies_from_browser: str | None = None
     import yt_dlp
 
     opts = _base_opts(cookies_from_browser) | {
-        "format": f"bv*[height<={max_height}][ext=mp4]+ba[ext=m4a]/b[height<={max_height}][ext=mp4]/bv*[height<={max_height}]+ba/b",
+        # H.264 first: it decodes many times faster than AV1/VP9, and every render decodes the source.
+        "format": _format(max_height),
         "merge_output_format": "mp4",
         "outtmpl": str(work.path("source.%(ext)s")),
         "quiet": False,

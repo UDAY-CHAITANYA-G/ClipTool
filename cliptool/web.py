@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from . import assets, pipeline, render
+from . import assets, pipeline, render, userpresets
 from .fetch import video_id_from_url
 
 STATIC = Path(__file__).parent / "static"
@@ -59,13 +59,19 @@ def _running_job() -> dict | None:
     return next((j for j in JOBS.values() if j["status"] == "running"), None)
 
 
+def _active() -> list[dict]:
+    return [j for j in JOBS.values() if j["status"] in ("running", "queued")]
+
+
 def _busy() -> bool:
     """A job is running or waiting in the queue."""
     return any(j["status"] in ("running", "queued") for j in JOBS.values())
 
 
-# Jobs run one at a time, in the order they were started: renders compete for the CPU and some
-# touch the same files, so a second job waits in this queue instead of being refused.
+# Several jobs run side by side (new videos, edits, your own clips). Clip files are protected by
+# per-run / per-clip locks in pipeline, and render.RENDER_SLOTS caps how many ffmpeg encodes run at
+# once so the computer stays usable. Extra jobs wait in this queue. Override with CLIPTOOL_JOBS=n.
+JOB_WORKERS = max(1, int(__import__("os").environ.get("CLIPTOOL_JOBS") or render.RENDER_WORKERS + 1))
 JOB_QUEUE: "queue.Queue[tuple[dict, object]]" = queue.Queue()
 
 
@@ -83,13 +89,61 @@ def _worker() -> None:
             JOB_QUEUE.task_done()
 
 
+def _queue_stage(job: dict) -> str:
+    """Live 'waiting' text for a queued job: how many are ahead of it."""
+    if job.get("wait_msg"):
+        return job["wait_msg"]
+    queued = [j for j in JOBS.values() if j["status"] == "queued"]
+    ahead = queued.index(job) if job in queued else 0
+    return f"Waiting for a free slot ({ahead} ahead)" if ahead else "Waiting for a free slot (next)"
+
+
+def _merged_changes(job: dict) -> dict:
+    """All saves folded into one edit job, applied in the order they were made."""
+    out: dict = {}
+    for prep in job.get("preps") or []:
+        out.update(prep())
+    return out
+
+
+def _edit_work(run: Path, rank: int, job: dict):
+    """Render one clip. While another render of the same clip is still going this job stays 'waiting',
+    so newer saves of that clip are folded into it (see _enqueue) instead of rendering again."""
+    def work(log, stage, cancelled):
+        lock = pipeline.key_lock(f"{pipeline._run_key(run)}#{rank}")
+        if not lock.acquire(blocking=False):
+            with JOBS_LOCK:
+                job["status"], job["wait_msg"] = "queued", f"Waiting for clip #{rank}'s current render"
+            lock.acquire()
+        try:
+            with JOBS_LOCK:
+                job["sealed"] = True  # from here on new saves get their own job
+                job.pop("wait_msg", None)
+                job["status"], job["stage"] = "running", job.get("start_stage") or job["stage"]
+            if job["cancel"]:
+                raise pipeline.Cancelled()
+            return pipeline.edit_clip(run, rank, _merged_changes(job), log=log, stage=stage)
+        finally:
+            lock.release()
+    return work
+
+
 def _enqueue(job: dict, work) -> dict:
-    ahead = sum(1 for j in JOBS.values() if j is not job and j["status"] in ("running", "queued"))
-    if ahead:
-        job["start_stage"] = job["stage"]
-        job["status"], job["stage"] = "queued", f"Waiting for {ahead} job{'s' if ahead > 1 else ''} to finish"
-    else:
-        job["status"] = "queued"
+    """Queue a job. A new edit of a clip that already has an edit waiting is folded into that one
+    (one render with both sets of changes, newest wins) instead of rendering the clip twice."""
+    if job.get("kind") == "edit":
+        twin = next((j for j in JOBS.values() if j["status"] == "queued" and j.get("kind") == "edit" and not j["cancel"]
+                     and not j.get("sealed")
+                     and j.get("folder") == job.get("folder") and j.get("rank") == job.get("rank")), None)
+        if twin:
+            twin["preps"].extend(job["preps"])
+            twin["start_stage"] = f"Re-rendering clip #{job.get('rank')} (with your latest changes)"
+            return twin
+    job.setdefault("created", time.time())
+    job["start_stage"] = job["stage"]
+    job["status"] = "queued"
+    if len(_active()) >= JOB_WORKERS:
+        job["stage"] = "Waiting for a free slot"
     JOBS[job["id"]] = job
     JOB_QUEUE.put((job, work))
     return job
@@ -106,7 +160,7 @@ def _run_job(job: dict, work) -> None:
     def stage(name: str, p: float):
         job["stage"], job["progress"] = name, round(p, 3)
 
-    t0 = time.time()
+    t0 = job["started"] = time.time()
     try:
         job["result"] = work(log, stage, lambda: job["cancel"])
         job["result"]["seconds"] = round(time.time() - t0, 1)
@@ -116,6 +170,8 @@ def _run_job(job: dict, work) -> None:
     except Exception as e:  # report any failure to the page
         log(traceback.format_exc(limit=3))
         job["status"], job["error"] = "error", str(e) or e.__class__.__name__
+    finally:
+        job["finished"] = time.time()
 
 
 def _library() -> list[dict]:
@@ -286,6 +342,24 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._error(str(e))
             return True
+        if path == "/api/user-presets" and method == "GET":
+            self._json({"presets": userpresets.list_all(), "last": userpresets.LAST})
+            return True
+        if path == "/api/user-presets" and method == "POST":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                self._json(userpresets.save(body.get("name"), body.get("settings") or {}), HTTPStatus.CREATED)
+            except (ValueError, TypeError, KeyError) as e:
+                self._error(str(e) or "invalid preset")
+            return True
+        m3 = re.fullmatch(r"/api/user-presets/(.+)", path)
+        if m3 and method == "DELETE":
+            if userpresets.delete(m3.group(1)):
+                self._json({"deleted": m3.group(1)})
+            else:
+                self._error("no such preset", HTTPStatus.NOT_FOUND)
+            return True
         if path == "/api/paths" and method == "GET":
             self._json(_paths_payload())
             return True
@@ -403,12 +477,19 @@ class Handler(BaseHTTPRequestHandler):
             job = JOBS.get(m.group(1))
             if not job:
                 return self._error("no such job", HTTPStatus.NOT_FOUND)
-            return self._json({k: v for k, v in job.items() if k != "cancel"})
+            out = {k: v for k, v in job.items() if k != "cancel"}
+            if job["status"] == "queued":
+                out["stage"] = _queue_stage(job)
+            return self._json(out)
         if path == "/api/jobs":
             running = _running_job()
             queued = [j["id"] for j in JOBS.values() if j["status"] == "queued"]
             latest = queued[-1] if queued else (running["id"] if running else None)
-            return self._json({"running": running["id"] if running else None, "queued": queued, "latest": latest})
+            now = time.time()
+            shown = [j for j in JOBS.values() if j["status"] in ("running", "queued") or now - j.get("finished", 0) < 15]
+            return self._json({"running": running["id"] if running else None, "queued": queued, "latest": latest,
+                               "workers": JOB_WORKERS, "renders": render.RENDER_WORKERS,
+                               "jobs": [_job_summary(j) for j in shown]})
         if path == "/api/presets":
             return self._json({"presets": render.PRESETS, "preset_groups": render.PRESET_GROUPS, "positions": render.POSITIONS,
                                "filters": render.FILTER_PRESETS, "filter_limits": render.FILTER_LIMITS,
@@ -437,6 +518,15 @@ class Handler(BaseHTTPRequestHandler):
             generated = description.for_clip(info, {**clip, "description": None}, settings)
             return self._json({"text": description.for_clip(info, clip, settings), "generated": generated,
                                "custom": bool(clip.get("description"))})
+        m = re.fullmatch(r"/api/runs/([^/]+)/source-info", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                return self._json(pipeline.source_info(run))
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
         m = re.fullmatch(r"/api/runs/([^/]+)/(overview|overview-wave)", path)
         if m:
             run = _run_dir(m.group(1))
@@ -606,7 +696,7 @@ class Handler(BaseHTTPRequestHandler):
             if aspect not in render.SIZES or fit not in render.FITS:
                 return self._error("bad aspect or framing")
             jid = uuid.uuid4().hex[:12]
-            job = {"id": jid, "url": url, "status": "queued", "stage": "Starting", "progress": 0.0,
+            job = {"id": jid, "kind": "run", "url": url, "status": "queued", "stage": "Starting", "progress": 0.0,
                    "log": [], "result": None, "error": None, "cancel": False}
             style = body.get("style", "highlight")
             if style not in render.PRESETS:
@@ -615,15 +705,65 @@ class Handler(BaseHTTPRequestHandler):
                                     captions=bool(body.get("captions", True)), caption_style=style,
                                     hook_intro=bool(body.get("hook_intro")),
                                     speed=min(2.0, max(0.5, float(body.get("speed") or 1.0))),
+                                    preset=(str(body.get("preset")) if body.get("preset") else None),
                                     out=OUTPUT, work=WORK)
 
             def work(log, stage, cancelled):
-                res = pipeline.run(opts, log=log, stage=stage, cancelled=cancelled)
+                # The same video twice at once would share its download: let the second one wait.
+                with pipeline.key_lock("video:" + (video_id_from_url(url) or url)):
+                    res = pipeline.run(opts, log=log, stage=stage, cancelled=cancelled)
+                job["title"] = res["info"]["title"]
                 return {"folder": res["out_dir"].name, "title": res["info"]["title"], "clips": res["clips"]}
 
             with JOBS_LOCK:
                 _enqueue(job, work)
             return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/fast-source", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            with JOBS_LOCK:
+                if any(j.get("folder") == run.name for j in _active()):
+                    return self._error("Clips of this video are rendering; try again when they finish.", HTTPStatus.CONFLICT)
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "source", "folder": run.name, "status": "queued",
+                       "stage": "Getting the faster (H.264) video", "progress": 0.02, "log": [], "result": None,
+                       "error": None, "cancel": False}
+                _enqueue(job, lambda log, stage, cancelled: pipeline.make_source_fast(run, log=log, stage=stage))
+            return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/apply-preset", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                ps = userpresets.get(str(body.get("name") or ""))
+                if ps is None:
+                    raise ValueError("That preset doesn't exist any more.")
+                data, info, sentences, source = pipeline.load_run(run)
+                want = set(int(r) for r in body.get("ranks") or [c["rank"] for c in data["clips"]])
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            except (ValueError, TypeError) as e:
+                return self._error(str(e) or "invalid request")
+            ids = []
+            for c in data["clips"]:
+                if c["rank"] not in want:
+                    continue
+                rank_no = c["rank"]
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank_no, "status": "queued",
+                       "stage": f"Applying preset to clip #{rank_no}", "progress": 0.05, "log": [], "result": None,
+                       "error": None, "cancel": False,
+                       "preps": [lambda c=c: userpresets.changes_for_clip(ps, c, sentences, info, source)]}
+                with JOBS_LOCK:
+                    job = _enqueue(job, _edit_work(run, rank_no, job))
+                if job["id"] not in ids:
+                    ids.append(job["id"])
+            return self._json({"jobs": ids}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/runs/([^/]+)/clips", path)
         if m:
             run = _run_dir(m.group(1))
@@ -666,14 +806,10 @@ class Handler(BaseHTTPRequestHandler):
             jid = uuid.uuid4().hex[:12]
             job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank, "status": "queued",
                    "stage": f"Re-rendering clip #{rank}", "progress": 0.05, "log": [], "result": None,
-                   "error": None, "cancel": False}
-
-            def work(log, stage, cancelled):
-                return pipeline.edit_clip(run, rank, changes, log=log, stage=stage)
-
+                   "error": None, "cancel": False, "preps": [lambda: changes]}
             with JOBS_LOCK:
-                _enqueue(job, work)
-            return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+                job = _enqueue(job, _edit_work(run, rank, job))
+            return self._json({"id": job["id"], "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/jobs/([a-f0-9]+)/cancel", path)
         if m:
             job = JOBS.get(m.group(1))
@@ -688,10 +824,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = unquote(urlparse(self.path).path)
         with JOBS_LOCK:
-            if _busy():
+            m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)", path)
+            if m and any(j.get("folder") == m.group(1) and j.get("rank") in (None, int(m.group(2)))
+                         and j.get("kind") in ("edit", "add") for j in _active()):
+                return self._error("This clip is still rendering; wait for it to finish or cancel it first.",
+                                   HTTPStatus.CONFLICT)
+            if not m and _busy():
                 return self._error("Videos are rendering; wait for them to finish or cancel them first.", HTTPStatus.CONFLICT)
             try:
-                m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)", path)
                 if m:
                     run = _run_dir(m.group(1))
                     if not run:
@@ -728,9 +868,29 @@ def _open_folder(p: Path) -> None:
         subprocess.Popen(["xdg-open", str(p)])
 
 
+def _job_summary(j: dict) -> dict:
+    kind = j.get("kind", "run")
+    if kind == "edit":
+        label = f"Clip #{j.get('rank')}"
+    elif kind == "source":
+        label = "Faster video (H.264)"
+    elif kind == "add":
+        label = "Your new clip"
+    else:
+        label = j.get("title") or "New video"
+    res = j.get("result") or {}
+    return {"id": j["id"], "kind": kind, "label": label, "status": j["status"],
+            "stage": _queue_stage(j) if j["status"] == "queued" else j["stage"],
+            "progress": j.get("progress", 0), "error": j.get("error"), "url": j.get("url"),
+            "folder": res.get("folder") or j.get("folder"), "rank": j.get("rank") or res.get("rank"),
+            "seconds": round(((j.get("finished") or time.time()) - j["started"]), 1) if j.get("started") else None,
+            "log_tail": j["log"][-1] if j.get("log") else ""}
+
+
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
     refresh_paths()
-    threading.Thread(target=_worker, daemon=True, name="cliptool-jobs").start()
+    for n in range(JOB_WORKERS):
+        threading.Thread(target=_worker, daemon=True, name=f"cliptool-jobs-{n}").start()
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
     print(f"ClipTool is running at {url}  (Ctrl+C to stop)", flush=True)

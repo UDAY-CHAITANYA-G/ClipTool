@@ -48,12 +48,23 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 .job{margin-top:16px;display:none}
 .job.on{display:block}
-.jobtop{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.jobsum{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;color:var(--quiet);margin-bottom:6px}
+.jobsum b{color:var(--ink)}
+.jobrows{display:flex;flex-direction:column;gap:6px}
+.jrow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.6fr) 44px auto;gap:10px;align-items:center;
+  padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--soft);font-size:13px}
+.jrow .jl{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jrow .js{color:var(--quiet);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jrow .pct{text-align:right}
+.jrow .bar{grid-column:1/-1;margin:0;height:5px}
+.jrow button{font-size:12px;padding:3px 9px}
+.jrow.queued{opacity:.75}.jrow.queued .bar span{background:var(--quiet)}
+.jrow.done .bar span{background:var(--good)}.jrow.error .bar span,.jrow.cancelled .bar span{background:var(--bad)}
+.jrow.error .js{color:var(--bad)}
 .stage{font-weight:650}
 .pct{color:var(--quiet);font-variant-numeric:tabular-nums}
 .bar{height:8px;background:var(--soft);border-radius:4px;margin:10px 0;overflow:hidden}
 .bar span{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
-.job.done .bar span{background:var(--good)} .job.error .bar span{background:var(--bad)}
 details.log summary{cursor:pointer;color:var(--quiet);font-size:13px}
 details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10px;border-radius:8px;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
 
@@ -96,6 +107,11 @@ details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10
 .empty{color:var(--quiet);font-size:14px;padding:30px;text-align:center;border:1px dashed var(--line);border-radius:var(--radius)}
 /* Grid / List switch */
 .headtools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.runpreset{font:inherit;font-size:12.5px;color:#a855f7;background:var(--panel);border:1px solid #a855f7;border-radius:8px;padding:5px 8px;max-width:190px}
+.srcwarn{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 12px;padding:9px 12px;border:1px solid #f59e0b;
+  border-radius:10px;background:color-mix(in srgb,#f59e0b 10%,transparent);font-size:13px}
+.srcwarn[hidden]{display:none}
+.srcwarn button{font-size:12.5px;padding:5px 10px;border-color:#f59e0b;color:#f59e0b;font-weight:650}
 .fullbtn{border-color:var(--accent);color:var(--accent);font-weight:650;font-size:12.5px;padding:5px 10px}
 .tag.mine{border-color:#a855f7;color:#a855f7}
 .viewseg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -247,6 +263,10 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
             <option value="0.75">0.75× slower</option><option value="0.9">0.9×</option><option value="1" selected>1× normal</option>
             <option value="1.1">1.1×</option><option value="1.25">1.25× faster</option><option value="1.5">1.5×</option><option value="2">2×</option>
           </select></label>
+        <label>Your preset
+          <select id="preset" title="Use the whole look you saved in the editor (★ Presets) - layout, captions, logos, filters, ... It overrides the format settings here.">
+            <option value="">None - use these settings</option>
+          </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
         <label class="check" title="Each clip starts with its most gripping 3-5 seconds, then plays from the beginning"><input id="hookintro" type="checkbox"> Hook intro</label>
       </div>
@@ -254,12 +274,9 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
       <div class="msg" id="msg"></div>
     </form>
 
-    <div class="job" id="job">
-      <div class="jobtop">
-        <div><span class="stage" id="stage">Starting</span></div>
-        <div><span class="pct" id="pct">0%</span> <button type="button" id="cancel">Cancel</button></div>
-      </div>
-      <div class="bar"><span id="barfill"></span></div>
+    <div class="job" id="job" aria-live="polite">
+      <div class="jobsum"><span id="jobsum"></span><span id="jobcap"></span></div>
+      <div class="jobrows" id="jobrows"></div>
       <details class="log"><summary>Details</summary><pre id="log"></pre></details>
     </div>
   </section>
@@ -268,6 +285,9 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
     <section class="results">
       <div class="headrow"><h2 id="rtitle">Clips</h2>
         <div class="headtools">
+          <select id="runpreset" class="runpreset" hidden aria-label="Apply one of your presets to every clip in this run" title="Re-render every clip in this run with one of your saved looks">
+            <option value="">★ Preset to all clips…</option>
+          </select>
           <button type="button" id="openfull" class="fullbtn" hidden title="Watch the whole video, search what's said, and cut your own clips">▶ Full video – make clips</button>
           <div class="viewseg" role="group" aria-label="Clip view">
             <button type="button" data-view="grid" aria-pressed="true">▦ Grid</button><button type="button" data-view="list" aria-pressed="false">☰ List</button>
@@ -276,6 +296,7 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
         </div>
       </div>
       <p class="sub" id="rsub"></p>
+      <div class="srcwarn" id="srcwarn" hidden></div>
       <div class="grid" id="grid"></div>
       <div class="empty" id="empty">No clips yet. Paste a link above, or open a previous run on the right.</div>
     </section>
@@ -347,52 +368,149 @@ let pollTimer = null, currentFolder = null, currentRun = null;
 const FRAMING = { crop: "Crop", pan: "Follows the action", blur: "Full frame + blur", black: "Full frame + black",
                   stack: "Facecam + game" };
 
-function setBusy(b){ $("go").disabled = b; $("go").textContent = b ? "Working..." : "Find clips"; }
+function setBusy(b){ $("go").disabled = b; $("go").textContent = b ? "Starting..." : "Find clips"; }
 
-function showJob(j){
-  const box = $("job"); box.className = "job on " + (j.status === "running" ? "" : j.status);
-  const pct = Math.round((j.progress || 0) * 100);
-  $("stage").textContent = j.status === "error" ? "Failed: " + (j.error || "unknown error")
-    : j.status === "done" ? "Done" + (j.result ? " in " + Math.round(j.result.seconds) + " s" : "")
-    : j.stage;
-  $("pct").textContent = pct + "%";
-  $("barfill").style.width = (j.status === "done" ? 100 : pct) + "%";
-  $("cancel").style.display = j.status === "running" || j.status === "queued" ? "" : "none";
-  if (j.status === "queued") $("stage").textContent = "⏳ Queued - " + j.stage.charAt(0).toLowerCase() + j.stage.slice(1) + ", then it starts automatically";
-  const log = $("log"); const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-  log.textContent = (j.log || []).join("\n"); if (atEnd) log.scrollTop = log.scrollHeight;
-}
-
-let currentJob = null;
-async function poll(id){
-  clearTimeout(pollTimer);
-  currentJob = id;
+/* AV1 downloads decode slower than real time here: offer the H.264 version (renders get several times faster). */
+async function checkSource(folder){
+  const box = $("srcwarn"); box.hidden = true;
   try {
-    const r = await fetch("/api/jobs/" + id); const j = await r.json();
-    showJob(j);
-    if (j.status === "running" || j.status === "queued") { pollTimer = setTimeout(() => poll(id), 1000); return; }
-    setBusy(false);
-    if (j.status === "done") { await loadLibrary(); openRun(j.result.folder); }
-  } catch (e) { pollTimer = setTimeout(() => poll(id), 2000); }
+    const d = await (await fetch(`/api/runs/${encodeURIComponent(folder)}/source-info`)).json();
+    if (folder !== currentFolder || !d.slow) return;
+    box.innerHTML = `<span>⚡ <b>Renders of this video are slow</b> - it was downloaded as ${esc(String(d.codec).toUpperCase())}, which this
+      computer decodes slower than real time. The H.264 version renders several times faster (same video, ~2 GB download).</span>
+      <button type="button" id="fastsrc">Get faster version</button>`;
+    box.hidden = false;
+    $("fastsrc").onclick = async () => {
+      releaseVideos();
+      const r = await fetch(`/api/runs/${encodeURIComponent(folder)}/fast-source`, { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { toast(j.error || "Couldn't start the download."); return; }
+      box.hidden = true; toast("Downloading the faster version - keep editing meanwhile"); poll(j.id);
+    };
+  } catch (e) {}
 }
+
+/* Your presets (saved from the editor's ★ Presets): picker for new runs + "apply to all clips" on a run. */
+let USER_PRESETS = [];
+window.refreshPresetPickers = function(list){
+  USER_PRESETS = list || [];
+  for (const [id, first] of [["preset", "None - use these settings"], ["runpreset", "★ Preset to all clips…"]]) {
+    const sel = $(id), keep = sel.value;
+    sel.innerHTML = `<option value="">${first}</option>` + USER_PRESETS.map(p => `<option value="${esc(p.name)}" title="${esc(p.summary)}">${esc(p.name)}</option>`).join("");
+    if (USER_PRESETS.some(p => p.name === keep)) sel.value = keep;
+  }
+  $("runpreset").hidden = !USER_PRESETS.length || !currentFolder;
+};
+fetch("/api/user-presets").then(r => r.json()).then(d => window.refreshPresetPickers(d.presets)).catch(() => {});
+$("runpreset").addEventListener("change", async e => {
+  const name = e.target.value; e.target.value = "";
+  if (!name || !currentRun) return;
+  const p = USER_PRESETS.find(x => x.name === name);
+  if (!confirm(`Re-render all ${currentRun.clips.length} clips with your preset “${name}”?
+
+${p ? p.summary : ""}
+
+Each clip keeps its own start/end and words.`)) return;
+  releaseVideos();
+  const r = await fetch(`/api/runs/${encodeURIComponent(currentFolder)}/apply-preset`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Couldn't apply the preset."); return; }
+  toast(`Applying “${name}” to ${d.jobs.length} clips - they render side by side`);
+  poll(d.jobs[0]);
+});
+
+/* Jobs run side by side. One list shows every running / waiting job (and just-finished ones for a moment). */
+const JOB_SEEN = {};          // id -> last status we saw
+let currentJob = null;        // the job whose log "Details" shows
+function jobLabel(j){
+  if (j.kind === "run") return j.label === "New video" && j.url ? "New video: " + j.url.replace(/^https?:\/\/(www\.)?/, "") : j.label;
+  return j.label;
+}
+function renderJobs(d){
+  const jobs = d.jobs || [];
+  const box = $("job");
+  box.className = "job" + (jobs.length ? " on" : "");
+  const running = jobs.filter(j => j.status === "running").length, waiting = jobs.filter(j => j.status === "queued").length;
+  $("jobsum").innerHTML = running || waiting
+    ? `<b>${running} working</b>${waiting ? ` · ${waiting} waiting` : ""}`
+    : "All done";
+  $("jobcap").textContent = `Runs ${d.workers} jobs at once · ${d.renders} renders at a time`;
+  $("jobrows").innerHTML = jobs.map(j => {
+    const pct = j.status === "done" ? 100 : Math.round((j.progress || 0) * 100);
+    const stage = j.status === "error" ? "Failed: " + (j.error || "unknown error")
+      : j.status === "done" ? "Done" + (j.seconds ? ` in ${Math.round(j.seconds)} s` : "")
+      : j.status === "cancelled" ? "Cancelled"
+      : j.status === "queued" ? "⏳ " + j.stage : j.stage;
+    const live = j.status === "running" || j.status === "queued";
+    return `<div class="jrow ${j.status}" data-job="${j.id}">
+      <span class="jl" title="${esc(jobLabel(j))}">${esc(jobLabel(j))}</span>
+      <span class="js" title="${esc(stage)}">${esc(stage)}</span>
+      <span class="pct">${pct}%</span>
+      ${live ? `<button type="button" data-cancel="${j.id}">Cancel</button>` : "<span></span>"}
+      <div class="bar"><span style="width:${pct}%"></span></div></div>`;
+  }).join("");
+}
+async function showLog(){
+  const id = currentJob; if (!id) return;
+  try {
+    const j = await (await fetch("/api/jobs/" + id)).json();
+    const log = $("log"); const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = (j.log || []).join("\n"); if (atEnd) log.scrollTop = log.scrollHeight;
+  } catch (e) {}
+}
+async function onJobFinished(j){
+  if (j.status === "error") { toast(`${jobLabel(j)}: ${j.error || "failed"}`); return; }
+  if (j.status !== "done") return;
+  const editorOpen = document.getElementById("ws") && !document.getElementById("ws").hidden;
+  if (j.kind === "run") {
+    await loadLibrary();
+    if (!editorOpen && (!currentFolder || !document.querySelector(".fv:not([hidden])"))) openRun(j.folder);
+    toast(`${jobLabel(j)} - clips ready`);
+  } else {
+    if (j.folder === currentFolder && !editorOpen) openRun(currentFolder);
+    toast(`${jobLabel(j)} is ready`);
+  }
+}
+async function pollJobs(){
+  clearTimeout(pollTimer);
+  let d;
+  try { d = await (await fetch("/api/jobs")).json(); }
+  catch (e) { pollTimer = setTimeout(pollJobs, 2000); return; }
+  renderJobs(d);
+  for (const j of d.jobs || []) {
+    const was = JOB_SEEN[j.id];
+    JOB_SEEN[j.id] = j.status;
+    if (was && was !== j.status && !["running", "queued"].includes(j.status)) onJobFinished(j);
+  }
+  const live = (d.jobs || []).filter(j => j.status === "running" || j.status === "queued");
+  if (!currentJob || !live.some(j => j.id === currentJob)) currentJob = (live.find(j => j.status === "running") || live[0] || {}).id || currentJob;
+  if ($("log").closest("details").open) showLog();
+  if ((d.jobs || []).length) pollTimer = setTimeout(pollJobs, live.length ? 1000 : 4000);
+}
+/* Kept for editor.js / fullvideo.js: starting a job just (re)starts the list poller. */
+function poll(id){ if (id) { currentJob = id; JOB_SEEN[id] = JOB_SEEN[id] || "queued"; } pollJobs(); }
+function showJob(){ $("job").classList.add("on"); }
+$("log").closest("details").addEventListener("toggle", showLog);
+$("jobrows").addEventListener("click", async e => {
+  const b = e.target.closest("[data-cancel]");
+  if (b) { b.disabled = true; b.textContent = "Cancelling…"; await fetch("/api/jobs/" + b.dataset.cancel + "/cancel", { method: "POST" }); pollJobs(); return; }
+  const row = e.target.closest("[data-job]");
+  if (row) { currentJob = row.dataset.job; const det = $("log").closest("details"); det.open = true; showLog(); }
+});
 
 $("f").addEventListener("submit", async e => {
   e.preventDefault(); $("msg").textContent = "";
   const body = { url: $("url").value.trim(), count: +$("count").value, min: +$("min").value, max: +$("max").value,
-                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked, speed: +$("speed").value };
+                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked, speed: +$("speed").value, preset: $("preset").value || null };
   if (body.min >= body.max) { $("msg").textContent = "Min length must be smaller than max length."; return; }
   setBusy(true);
   const r = await fetch("/api/jobs", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
   const d = await r.json();
   if (!r.ok) { setBusy(false); $("msg").textContent = d.error || "Could not start."; return; }
-  showJob({ status: "running", stage: "Starting", progress: 0, log: [] });
+  setBusy(false); $("url").value = "";
+  toast(d.status === "queued" && d.stage.startsWith("Waiting") ? "Queued - it starts when a slot is free" : "Started - you can add more links meanwhile");
   poll(d.id);
-});
-
-$("cancel").addEventListener("click", async () => {
-  const r = await fetch("/api/jobs"); const d = await r.json();
-  const id = currentJob || d.latest || d.running;
-  if (id) { await fetch("/api/jobs/" + id + "/cancel", { method: "POST" }); $("stage").textContent = "Cancelling after this step..."; }
 });
 
 /* Small labels on each clip: layout, ratio, caption style, speed, extras. */
@@ -466,12 +584,14 @@ async function openRun(folder){
   const r = await fetch("/api/library/" + encodeURIComponent(folder)); if (!r.ok) return;
   const d = await r.json();
   currentRun = d;
+  checkSource(folder);
   $("rtitle").textContent = d.video.title;
   $("rsub").innerHTML = `${esc(d.video.channel || "")} · ${d.clips.length} clips · <a href="${esc(d.video.webpage_url)}" target="_blank" rel="noopener">source video</a>`;
   $("grid").innerHTML = d.clips.map(c => card(c, folder, d.settings.aspect)).join("");
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
   $("openfull").hidden = false;
+  $("runpreset").hidden = !USER_PRESETS.length;
   if (WM.all) renderWmRows();
 }
 
@@ -803,8 +923,9 @@ renderWmRows = function(){ _renderWmRows(); renderLogoStatus(); };
   loadWatermarks().catch(() => {});
   const items = await loadLibrary();
   const r = await fetch("/api/jobs"); const d = await r.json();
-  if (d.latest || d.running) { setBusy(true); poll(d.latest || d.running); }
-  else if (items.length) openRun(items[0].folder);
+  for (const j of d.jobs || []) JOB_SEEN[j.id] = j.status;
+  if ((d.jobs || []).length) pollJobs();
+  if (items.length) openRun(items[0].folder);
 })();
 </script>
 <script src="/static/editor.js"></script>

@@ -59,6 +59,20 @@ def read_audio_range(path: Path, start: float, dur: float, rate: int = 8000):
     return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def video_codec(path: Path) -> str | None:
+    """Codec name of the first video stream, e.g. 'h264', 'av1', 'vp9'."""
+    import re
+
+    proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    m = re.search(r"Video: (\w+)", proc.stderr)
+    return m.group(1).lower() if m else None
+
+
+# Codecs this ffmpeg decodes slowly in software (no dav1d / hardware AV1 here): renders crawl.
+SLOW_CODECS = {"av1"}
+
+
 def has_audio(path: Path) -> bool:
     proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
                           encoding="utf-8", errors="replace")

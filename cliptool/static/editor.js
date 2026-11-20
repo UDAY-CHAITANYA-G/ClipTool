@@ -50,6 +50,10 @@
         <button type="button" class="back" data-act="close" title="Back to clips (Esc)">← Clips</button>
         <input class="ttl" id="ws-title" aria-label="Clip title" maxlength="100">
         <span class="dirty" id="ws-dirty"></span>
+        <div class="pswrap">
+          <button type="button" class="psbtn" data-act="presets" aria-haspopup="dialog" aria-expanded="false" title="Save this clip's whole look as a preset, or apply one">★ Presets</button>
+          <div class="pspop" id="ws-pspop" hidden role="dialog" aria-label="Presets"></div>
+        </div>
         <button type="button" class="icon" data-act="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
         <button type="button" class="icon" data-act="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
         <button type="button" class="primary" data-act="save">Save &amp; render</button>
@@ -705,6 +709,34 @@
     close: () => close(),
     undo, redo,
     save: () => save(),
+    presets: () => togglePresets(),
+    pssave: async () => {
+      const name = (el("ws-psname").value || "").trim();
+      if (!name) { el("ws-psname").focus(); toast("Give the preset a name."); return; }
+      if (UP.some(p => p.name === name) && !confirm(`Replace your preset “${name}”?`)) return;
+      const r = await fetch("/api/user-presets", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, settings: presetFromState() }) });
+      const d = await r.json();
+      if (!r.ok) { toast(d.error || "Couldn't save the preset."); return; }
+      toast(`Preset “${d.name}” saved: ${d.summary}`);
+      await loadPresets(); renderPresetPop();
+    },
+    psapply: v => { applyPreset(UP[+v]); togglePresets(false); },
+    psall: async v => {
+      const p = UP[+v];
+      if (!confirm(`Re-render all ${currentRun.clips.length} clips of this run with “${p.name}”?\n\nEach clip keeps its own start/end and words. Unsaved changes in this editor are not saved.`)) return;
+      const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/apply-preset`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name }) });
+      const d = await r.json();
+      if (!r.ok) { toast(d.error || "Couldn't apply the preset."); return; }
+      releaseVideos(); close(true); toast(`Applying “${p.name}” to ${d.jobs.length} clips`); poll(d.jobs[0]);
+    },
+    psdel: async v => {
+      const p = UP[+v];
+      if (!confirm(`Delete your preset “${p.name}”?`)) return;
+      await fetch("/api/user-presets/" + encodeURIComponent(p.name), { method: "DELETE" });
+      await loadPresets(); renderPresetPop();
+    },
     play: () => togglePlay(),
     back5: () => seekOut(tOut() - 2),
     fwd5: () => seekOut(tOut() + 2),
@@ -1119,10 +1151,26 @@
     X = { open: true, folder, rank, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
           lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null, selImg: null };
     if (!WM.all) await loadWatermarks();
+    X.dsettings = d.settings;
+    S = stateFrom(clip);
+    if (!S.textEdited) S.text = transcriptText();
+    hist = []; fut = []; lastKey = ""; dirty = false; el("ws-dirty").textContent = "";
+    el("ws").hidden = false; document.body.style.overflow = "hidden";
+    const v = video();
+    v.src = d.source_url || ("/source/" + X.videoId);
+    v.addEventListener("loadedmetadata", () => { v.currentTime = S.start; v.playbackRate = S.speed; }, { once: true });
+    renderTicks(); renderPanel(); refresh(); loadWave();
+    el("ws-title").focus();
+  }
+
+  /* Editor state from a clip record (or a clip record with a preset merged over it). */
+  function stateFrom(clip){
+    const st = clip.style || {}, preset = C.presets[st.preset] ? st.preset : "highlight", p = C.presets[preset];
+    const ds = X.dsettings || {};
     const n = (v, def) => v === null || v === undefined ? def : v;
-    S = {
+    return {
       title: clip.title, hook: clip.hook, start: clip.start, end: clip.end,
-      aspect: clip.aspect || d.settings.aspect || "vertical", fit: clip.fit || d.settings.fit || "auto",
+      aspect: clip.aspect || ds.aspect || "vertical", fit: clip.fit || ds.fit || "auto",
       zoom: n(clip.zoom, 1), crop_x: n(clip.crop_x, 0.5), crop_y: n(clip.crop_y, 0.5),
       facecam: clip.facecam || null, cam_share: n(clip.cam_share, C.default_cam_share), cam_pos: clip.cam_pos || "top",
       game_x: n(clip.game_x, 0.5), game_y: n(clip.game_y, 0.5), game_zoom: n(clip.game_zoom, 1),
@@ -1140,14 +1188,68 @@
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
     };
-    if (!S.textEdited) S.text = transcriptText();
-    hist = []; fut = []; lastKey = ""; dirty = false; el("ws-dirty").textContent = "";
-    el("ws").hidden = false; document.body.style.overflow = "hidden";
-    const v = video();
-    v.src = d.source_url || ("/source/" + X.videoId);
-    v.addEventListener("loadedmetadata", () => { v.currentTime = S.start; v.playbackRate = S.speed; }, { once: true });
-    renderTicks(); renderPanel(); refresh(); loadWave();
-    el("ws-title").focus();
+  }
+
+  // ------------------------------------------------------------------ your presets (the whole look of a clip)
+  // Mirrors userpresets.KEYS on the server: everything except what belongs to this clip's moment.
+  const PRESET_STATE = ["aspect", "fit", "zoom", "crop_x", "crop_y", "facecam", "cam_share", "cam_pos", "game_x", "game_y",
+    "game_zoom", "speed", "filters", "captions", "capOffset", "style", "texts", "images", "volume", "mute", "fade_in",
+    "fade_out", "progress_bar", "quality"];
+  const PRESET_BODY = ["aspect", "fit", "zoom", "crop_x", "crop_y", "facecam", "cam_share", "cam_pos", "game_x", "game_y",
+    "game_zoom", "speed", "filters", "captions", "caption_offset", "style", "texts", "images", "volume", "mute", "fade_in",
+    "fade_out", "progress_bar", "quality"];
+  function presetFromState(){
+    const b = bodyFromState();
+    const out = Object.fromEntries(PRESET_BODY.filter(k => b[k] !== undefined).map(k => [k, b[k]]));
+    out.hook_intro_auto = !!(S.hookIntro && S.hookIntro.on && S.hookIntro.start != null);
+    return out;
+  }
+  let UP = [];   // [{name, summary, settings}]
+  async function loadPresets(){
+    try { UP = (await (await fetch("/api/user-presets")).json()).presets || []; } catch { UP = []; }
+    if (window.refreshPresetPickers) window.refreshPresetPickers(UP);
+    return UP;
+  }
+  function renderPresetPop(){
+    const pop = el("ws-pspop");
+    pop.innerHTML = `
+      <h3>Save this look</h3>
+      <p class="note">Stores layout &amp; framing, facecam, captions (style, position, sync), logos, text boxes, filters,
+        audio, speed, progress bar, quality and hook-intro on/off. Not the clip's start/end or its words.</p>
+      <div class="psrow"><input id="ws-psname" maxlength="40" placeholder="Preset name, e.g. GTA facecam" aria-label="Preset name">
+        <button type="button" class="primary" data-act="pssave">Save</button></div>
+      <h3>Your presets</h3>
+      ${UP.length ? `<ul class="pslist">${UP.map((p, i) => `<li>
+          <div class="psinfo"><b>${esc(p.name)}</b><span>${esc(p.summary)}</span></div>
+          <div class="psacts">
+            <button type="button" data-act="psapply" data-v="${i}" title="Use this look on this clip">Apply</button>
+            <button type="button" data-act="psall" data-v="${i}" title="Re-render every clip in this run with this look">All clips</button>
+            <button type="button" data-act="psdel" data-v="${i}" aria-label="Delete preset ${esc(p.name)}" title="Delete">✕</button>
+          </div></li>`).join("")}</ul>`
+        : `<p class="note">No presets yet. Save one above - every <b>Save &amp; render</b> also keeps your latest look as “Last saved”.</p>`}`;
+  }
+  function togglePresets(force){
+    const pop = el("ws-pspop"), btn = document.querySelector('#ws [data-act="presets"]');
+    const show = force !== undefined ? force : pop.hidden;
+    pop.hidden = !show; btn.setAttribute("aria-expanded", String(show));
+    if (show) { renderPresetPop(); loadPresets().then(() => { if (!pop.hidden) renderPresetPop(); }); }
+  }
+  function applyPreset(p){
+    const s = p.settings || {};
+    mutate("preset", () => {
+      const merged = { ...bodyFromState(), ...s, style: s.style || S.style };
+      if (s.fit === "stack" && !s.facecam) merged.facecam = S.facecam;
+      const ns = stateFrom(merged);
+      const len = S.end - S.start;
+      for (const k of PRESET_STATE) S[k] = ns[k];
+      if (S.facecam) S.facecam = shapeFacecam(S.facecam);
+      S.texts = (S.texts || []).map(t => ({ ...t, start: Math.min(+t.start || 0, Math.max(0, len - 0.5)), end: Math.min(t.end == null ? len : +t.end, len) }));
+      if (!s.hook_intro_auto && S.hookIntro) S.hookIntro = { ...S.hookIntro, on: false };
+    });
+    const v = video(); v.playbackRate = S.speed;
+    if (s.hook_intro_auto && !(S.hookIntro && S.hookIntro.start != null)) ACTS.findhook();
+    else if (s.hook_intro_auto) mutate("preset", () => { S.hookIntro.on = true; });
+    toast(`Preset “${p.name}” applied - press Save & render to keep it`);
   }
 
   function close(force){
@@ -1156,9 +1258,8 @@
     X.open = false; el("ws").hidden = true; document.body.style.overflow = "";
   }
 
-  async function save(){
+  function bodyFromState(){
     const title = S.title.trim(), hook = (S.hook || "").trim();
-    if (!title || !hook) { toast("Title and hook can't be empty."); return; }
     const typed = (S.text || "").replace(/\s+/g, " ").trim(), original = transcriptText().replace(/\s+/g, " ").trim();
     const body = {
       start: S.start, end: S.end, title, hook, aspect: S.aspect, fit: S.fit, zoom: S.zoom, crop_x: S.crop_x, crop_y: S.crop_y,
@@ -1174,6 +1275,12 @@
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };
     if (S.fit === "stack") body.facecam = S.facecam || C.default_facecam;
+    return body;
+  }
+
+  async function save(){
+    if (!S.title.trim() || !(S.hook || "").trim()) { toast("Title and hook can't be empty."); return; }
+    const body = bodyFromState();
     const btn = document.querySelector('#ws [data-act="save"]');
     btn.disabled = true;
     try {
@@ -1182,13 +1289,20 @@
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) { toast(d.error || "Could not save."); openRun(X.folder); return; }
-      const rank = X.rank;
-      close(true); setBusy(true);
-      showJob({ status: "running", stage: `Rendering clip #${rank}`, progress: 0.05, log: [] });
+      // Every save also remembers this whole look as the "Last saved" preset.
+      fetch("/api/user-presets", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Last saved", settings: presetFromState() }) }).then(() => loadPresets()).catch(() => {});
+      close(true);
+      showJob({ status: "running", stage: `Rendering clip #${X.rank}`, progress: 0.05, log: [] });
       poll(d.id);
     } finally { btn.disabled = false; }
   }
 
+  document.addEventListener("click", e => {
+    const pop = el("ws-pspop");
+    if (pop && !pop.hidden && !e.target.closest(".pswrap")) togglePresets(false);
+  });
+  window.loadUserPresets = loadPresets;
   window.openEditor = open;
   window.ClipEditor = { open, close, state: () => S, ctx: () => X, undo, redo };
 })();

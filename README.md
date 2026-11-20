@@ -60,6 +60,23 @@ Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes t
 - **Storage folders** - shows where finished clips and downloaded videos are stored (with space used), lets you
   pick other folders with a folder browser, and opens them in Explorer. Existing files are not moved.
 
+**Your presets (★ Presets in the editor):** save a clip's whole look - layout and framing, facecam box, captions
+(style, position, sync), logos, text boxes, filters, audio, speed, progress bar, export quality and hook intro on/off -
+under a name. A preset never stores the clip's start/end, edited words or speed zones. Every **Save & render** also
+keeps your latest look as **Last saved**. Use a preset: **Apply** (this clip, undoable), **All clips** (re-render the
+whole run with it), the **★ Preset to all clips…** picker on a run, **Your preset** on the main form for new runs, or
+`cliptool URL --preset "My look"`.
+
+**Jobs run side by side:** new videos, edits and your own clips run in parallel (4 jobs, 3 video encodes at a time
+on a 12-core PC; set `CLIPTOOL_JOBS` / `CLIPTOOL_RENDERS` to change it). The list under the form shows every job
+with its own progress and Cancel; click a row for its log. Saving the same clip again while its render is still
+waiting just updates that waiting render instead of rendering twice.
+
+**Faster renders:** downloads now prefer H.264. Videos downloaded earlier as AV1 decode slower than real time on
+this computer (no fast AV1 decoder), which made every render take minutes - such runs show **Get faster version**,
+which re-downloads the same video as H.264 and swaps it in (clips and timings stay the same). The encoder uses the
+x264 "faster" preset (the **High** export quality still uses "medium").
+
 **Full video – make your own clips:** open a run and press **▶ Full video – make clips**. You get the whole
 source video, an overview bar (audio waveform, replay heatmap, the clips already made - orange = picked by
 ClipTool, purple = picked by you) and the full searchable transcript. Set the start/end by dragging on the bar,

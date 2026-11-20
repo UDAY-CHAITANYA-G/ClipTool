@@ -13,11 +13,18 @@ Everything a clip can be edited with lives on the clip dict (see EDIT_KEYS in pi
 """
 from __future__ import annotations
 
+import os
 import re
+import threading
 import unicodedata
 from pathlib import Path
 
 from .ffmpeg import run as ffmpeg_run
+
+# How many ffmpeg encodes may run at the same time (x264 already uses several cores each).
+# Override with CLIPTOOL_RENDERS=n.
+RENDER_WORKERS = max(1, int(os.environ.get("CLIPTOOL_RENDERS") or max(2, min(4, (os.cpu_count() or 4) // 4))))
+RENDER_SLOTS = threading.BoundedSemaphore(RENDER_WORKERS)
 
 # Output formats. cap_scale scales caption font sizes (presets are tuned for 1080x1920);
 # bottom / top are caption margins in output pixels.
@@ -584,6 +591,8 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     clips_dir = out_dir / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     name = f"{rank:02d}_{slugify(clip['title'])}" + (f"_{version}" if version else "")
+    tag = f"{rank:02d}{version or ''}_{threading.get_ident() % 100000}"
+    subs_name, pan_name = f"subs_{tag}.ass", f"pan_{tag}.cmd"
     mp4, jpg = clips_dir / f"{name}.mp4", clips_dir / f"{name}.jpg"
     speed = _num(clip, "speed", 1.0)
     start, dur = clip["start"], clip["end"] - clip["start"]
@@ -617,7 +626,7 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
             ass = build_ass(words, 0.0, out_dur, SIZES[aspect], style, aspect, 1.0, texts, captions)
         else:
             ass = build_ass(words, start, start + dur, SIZES[aspect], style, aspect, speed, texts, captions)
-        (clips_dir / "subs.ass").write_text(ass, encoding="utf-8")
+        (clips_dir / subs_name).write_text(ass, encoding="utf-8")
 
     x = None
     used_fit = fit
@@ -644,7 +653,7 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
             xs = sorted(c for _, c in plan["path"])
             x = crop_x(source, xs[len(xs) // 2])
         elif used_fit == "pan":
-            (clips_dir / "pan.cmd").write_text(pan_commands(source, plan["path"], dur), encoding="utf-8")
+            (clips_dir / pan_name).write_text(pan_commands(source, plan["path"], dur), encoding="utf-8")
             x = crop_x(source, plan["path"][0][1])
 
     enc = cfg["encode"]
@@ -683,13 +692,27 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         src_inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
         vgraph = _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs)
         audio_args = ["-map", "[v]", "-map", "0:a:0?", "-af", _audio_filter(clip, out_dur, enc["loudness_lufs"])]
+    # Each render has its own subtitle / pan files so several clips can render at once.
+    vgraph = vgraph.replace("ass=subs.ass", f"ass={subs_name}").replace("sendcmd=f=pan.cmd", f"sendcmd=f={pan_name}")
+    try:
+        with RENDER_SLOTS:
+            _encode(src_inputs, clip, vgraph, audio_args, enc, crf, out_dur, mp4, jpg, clips_dir)
+    finally:
+        (clips_dir / subs_name).unlink(missing_ok=True)
+        (clips_dir / pan_name).unlink(missing_ok=True)
+    return {"file": f"clips/{mp4.name}", "thumbnail": f"clips/{jpg.name}",
+            "framing": used_fit, "facecam": clip.get("facecam")}
+
+
+def _encode(src_inputs, clip, vgraph, audio_args, enc, crf, out_dur, mp4, jpg, clips_dir) -> None:
     ffmpeg_run([
         *src_inputs,
         *[arg for img in image_layers(clip) for arg in ("-i", str(img["path"]))],
         "-filter_complex", vgraph,
         *audio_args,
         "-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p",
-        "-preset", str(enc["preset"]), "-crf", str(crf),
+        "-preset", "medium" if clip.get("quality") == "high" else str(enc["preset"]), "-crf", str(crf),
+        "-threads", str(max(2, (os.cpu_count() or 4) // RENDER_WORKERS)),
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{out_dur:.3f}",
         mp4.name,
     ], cwd=clips_dir)
@@ -700,7 +723,3 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     else:
         ffmpeg_run(["-i", mp4.name, "-t", "3", "-vf", "thumbnail=40", "-frames:v", "1", "-q:v", "3", jpg.name],
                    cwd=clips_dir)
-    (clips_dir / "subs.ass").unlink(missing_ok=True)
-    (clips_dir / "pan.cmd").unlink(missing_ok=True)
-    return {"file": f"clips/{mp4.name}", "thumbnail": f"clips/{jpg.name}",
-            "framing": used_fit, "facecam": clip.get("facecam")}

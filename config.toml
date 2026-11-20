@@ -26,7 +26,7 @@ margin_bottom = 520     # pixels from the bottom of a 1920-high frame (lower thi
 
 [encode]
 crf = 20
-preset = "medium"
+preset = "faster"   # x264 speed: faster renders ~2x quicker than medium; "High" export quality always uses medium
 loudness_lufs = -14
 
 [ai]

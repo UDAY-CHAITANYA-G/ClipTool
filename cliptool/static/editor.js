@@ -211,28 +211,37 @@
     let acc = 0;
     return toks.map((t, i) => { const s = t0 + (t1 - t0) * acc / tot; acc += wts[i]; return { w: t, s, e: t0 + (t1 - t0) * acc / tot }; });
   }
+  // Caption fields the editor can change; presets supply the defaults (see _style_defaults in render.py).
+  const STYLE_KEYS = ["font", "bold", "italic", "mode", "outline", "outline_color", "shadow", "shadow_color", "shadow_opacity",
+                      "spacing", "background", "band_color", "band_opacity", "color", "highlight", "uppercase", "words_per_line"];
+  const presetStyle = k => { const p = C.presets[k]; return Object.fromEntries(STYLE_KEYS.map(f => [f, p[f]])); };
+
+  /* Draw one caption line into `node` (mirrors _caption_style_line / caption_events in render.py). */
   function drawCap(node, toks, active, st, fontPx){
-    const p = C.presets[st.preset] || {}, mode = p.mode || "color";
-    const stroke = Math.max(1, fontPx * (p.outline || 4) / 78), strokeCol = p.outline_color || "#000";
-    node.style.cssText = `font-family:"${p.font}","Arial Black",Impact,sans-serif;font-size:${fontPx}px;font-weight:${mode === "plain" ? 600 : mode === "band" ? 500 : 800};color:${st.color};` +
-      (p.italic ? "font-style:italic;" : "") + (p.spacing ? `letter-spacing:${p.spacing / (p.size || 78) * fontPx * 0.9}px;` : "");
-    const shadow = p.shadow_color ? `${stroke * 1.2}px ${stroke * 1.2}px 0 ${p.shadow_color}` : `0 ${stroke}px ${stroke * 1.5}px rgba(0,0,0,.5)`;
+    const p = C.presets[st.preset] || {}, mode = st.mode || "color";
+    const unit = fontPx / (p.size || 78);                // 1 ASS pixel at this preview size
+    const ol = (st.outline || 0) * unit, sh = (st.shadow || 0) * unit;
+    node.style.cssText = `font-family:"${st.font}","Arial Black",Impact,sans-serif;font-size:${fontPx}px;` +
+      `font-weight:${st.bold === false ? 400 : 800};color:${st.color};font-style:${st.italic ? "italic" : "normal"};` +
+      (st.spacing ? `letter-spacing:${st.spacing * unit}px;` : "");
+    const shadowCss = !st.background && sh > 0 ? `${sh}px ${sh}px 0 ${hexA(st.shadow_color || "#000000", st.shadow_opacity ?? 0.5)}` : "";
     const word = (t, on) => {
       let css = "";
-      if (["color", "pop", "box"].includes(mode)) css += `-webkit-text-stroke:${stroke * 1.6}px ${strokeCol};paint-order:stroke fill;text-shadow:${shadow};`;
-      if (mode === "plain") css += `text-shadow:0 1px ${stroke * 2}px rgba(0,0,0,.9),0 0 2px #000;`;
-      if (mode === "glow") css += `text-shadow:0 0 ${fontPx * .18}px ${st.highlight},0 0 ${fontPx * .4}px ${st.highlight};-webkit-text-stroke:1px #111;paint-order:stroke fill;`;
+      if (!st.background && ol > 0) css += `-webkit-text-stroke:${ol * 2}px ${mode === "glow" ? st.highlight : st.outline_color};paint-order:stroke fill;`;
+      const shadows = [];
+      if (mode === "glow") shadows.push(`0 0 ${fontPx * .18}px ${st.highlight}`, `0 0 ${fontPx * .4}px ${st.highlight}`);
+      if (shadowCss) shadows.push(shadowCss);
+      if (shadows.length) css += `text-shadow:${shadows.join(",")};`;
       if (on && mode === "box") css += `background:${st.highlight};border-radius:.18em;padding:0 .14em;-webkit-text-stroke:0;text-shadow:none;`;
       else if (on && ["color", "glow", "pop"].includes(mode)) css += `color:${st.highlight};`;
       return `<span class="w" style="${css}">${esc(st.uppercase ? t.toUpperCase() : t)}</span>`;
     };
-    if (mode === "pop") { node.innerHTML = active >= 0 ? word(toks[active], true) : ""; return; }
-    if (mode === "band") {
-      const s = toks.join(" ");
-      node.innerHTML = `<span style="background:${p.band_color ? hexA(p.band_color, 0.75) : "rgba(0,0,0,.62)"};padding:.08em .35em;border-radius:.12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;line-height:1.5">${esc(st.uppercase ? s.toUpperCase() : s)}</span>`;
-      return;
-    }
-    node.innerHTML = toks.map((t, i) => word(t, mode !== "plain" && i === active)).join(" ");
+    let html = mode === "pop" ? (active >= 0 ? word(toks[active], true) : "")
+             : toks.map((t, i) => word(t, mode !== "plain" && i === active)).join(" ");
+    if (st.background && html)
+      html = `<span style="background:${hexA(st.band_color || "#000000", st.band_opacity ?? 0.62)};padding:.08em .35em;border-radius:.12em;` +
+             `box-decoration-break:clone;-webkit-box-decoration-break:clone;line-height:1.5">${html}</span>`;
+    node.innerHTML = html;
   }
   function drawCaptions(){
     const cap = el("ws-cap"), v = video(), st = S.style;
@@ -426,10 +435,22 @@
           Object.entries(C.presets).filter(([, p]) => (p.group || "standard") === g).map(([k, p]) =>
           `<button type="button" class="preset${g === "gta" ? " gta" : ""}" role="radio" aria-checked="${k === st.preset}" data-act="preset" data-v="${k}">
             <span class="pv"><span class="cap" data-tile="${k}"></span></span><span class="nm">${esc(p.label)}</span></button>`).join("")}</div>`).join("")}
+        <h3>Customize text</h3>
         <div class="fld">Position${seg("cappos", [["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]], st.position)}</div>
-        ${rng("Size", "style.scale", 0.5, 1.8, 0.05, FMT.pct)}${rng("Words per line", "style.words_per_line", 1, 8, 1, FMT.int)}
+        <div class="row"><label class="fld">Font<select data-bind="style.font">${[...new Set([st.font, ...C.fonts])].map(f => `<option ${f === st.font ? "selected" : ""}>${esc(f)}</option>`).join("")}</select></label>
+          <div>${rng("Size", "style.scale", 0.5, 1.8, 0.05, FMT.pct)}</div></div>
+        <div class="row3">${check("Bold", "style.bold")}${check("Italic", "style.italic")}${check("UPPERCASE", "style.uppercase")}</div>
+        ${rng("Letter spacing", "style.spacing", -2, 20, 1, FMT.int)}${rng("Words per line", "style.words_per_line", 1, 8, 1, FMT.int)}
         <div class="row">${color("Text colour", "style.color")}${color("Highlight colour", "style.highlight")}</div>
-        ${check("UPPERCASE", "style.uppercase")}
+        <div class="fld">Spoken-word effect${seg("capfx", [["color", "Colour"], ["box", "Box"], ["pop", "Pop"], ["glow", "Glow"], ["plain", "None"]], st.mode)}</div>
+        <h3>Border, shadow & background</h3>
+        <div class="btnrow" style="margin-top:0"><button type="button" data-act="noborder">No border</button><button type="button" data-act="noshadow">No shadow</button><button type="button" data-act="cleantext">Clean text (no border, shadow or band)</button></div>
+        ${check("Background band behind text", "style.background")}
+        ${st.background ? `<div class="row">${color("Band colour", "style.band_color")}<div>${rng("Band opacity", "style.band_opacity", 0, 1, 0.05, FMT.pct)}</div></div>` : `
+        <div class="row"><div>${rng("Border width", "style.outline", 0, 12, 1, FMT.int)}</div>${color("Border colour", "style.outline_color")}</div>
+        <div class="row"><div>${rng("Shadow", "style.shadow", 0, 12, 1, FMT.int)}</div>${color("Shadow colour", "style.shadow_color")}</div>
+        ${rng("Shadow opacity", "style.shadow_opacity", 0, 1, 0.05, FMT.pct)}`}
+        <div class="btnrow"><button type="button" data-act="resetstyle">Reset to ${esc(C.presets[st.preset].label)} defaults</button></div>
         <h3>Caption text</h3><textarea rows="6" data-bind="text" aria-label="Caption text">${esc(S.text)}</textarea>
         <p class="note">Fix words or spelling. Timing follows the speech. <button type="button" data-act="resettext">Reset to transcript</button></p>`;
     },
@@ -464,7 +485,7 @@
     el("ws-panel").innerHTML = PANELS[X.tool]();
     if (X.tool === "captions") document.querySelectorAll("#ws [data-tile]").forEach(n => {
       const k = n.dataset.tile, p = C.presets[k];
-      const st = k === S.style.preset ? { ...S.style } : { preset: k, color: p.color, highlight: p.highlight, uppercase: p.uppercase };
+      const st = k === S.style.preset ? { ...S.style } : { preset: k, ...presetStyle(k) };
       drawCap(n, ["Something", "for", "me."], 2, st, p.mode === "pop" ? 20 : 12);
     });
     drawSource();
@@ -512,11 +533,16 @@
     twhole: () => mutate("ttime", () => { const t = sel(); t.start = 0; t.end = +outDur().toFixed(1); }),
     preset: v => mutate("preset", () => {
       const p = C.presets[v];
-      Object.assign(S.style, { preset: v, color: p.color, highlight: p.highlight, uppercase: p.uppercase, words_per_line: p.words_per_line, scale: 1 });
+      Object.assign(S.style, { preset: v, ...presetStyle(v), scale: 1 });
       if (p.position) S.style.position = p.position;
       else if (S.style.position === "top" && C.presets[v]) S.style.position = effectiveFit() === "stack" ? "middle" : "bottom";
     }),
     cappos: v => mutate("cappos", () => { S.style.position = v; }),
+    capfx: v => mutate("capfx", () => { S.style.mode = v; }),
+    noborder: () => mutate("capborder", () => { S.style.outline = 0; S.style.background = false; }),
+    noshadow: () => mutate("capshadow", () => { S.style.shadow = 0; }),
+    cleantext: () => mutate("capclean", () => { S.style.outline = 0; S.style.shadow = 0; S.style.background = false; }),
+    resetstyle: () => mutate("capreset", () => { Object.assign(S.style, presetStyle(S.style.preset), { scale: 1 }); }),
     resettext: () => mutate("captext", () => { S.textEdited = false; S.text = transcriptText(); }),
     fpreset: v => mutate("fpreset", () => { const { label, ...vals } = C.filters[v]; S.filters = { ...NEUTRAL, ...vals }; }),
     pbpos: v => mutate("pb", () => { S.progress_bar.position = v; }),
@@ -729,8 +755,8 @@
       game_x: n(clip.game_x, 0.5), game_y: n(clip.game_y, 0.5), game_zoom: n(clip.game_zoom, 1),
       speed: n(clip.speed, 1), filters: { ...NEUTRAL, ...(clip.filters || {}) },
       captions: clip.captions !== false, textEdited: !!clip.caption_text, text: clip.caption_text || "",
-      style: { preset, position: st.position || "bottom", scale: n(st.scale, 1), color: st.color || p.color,
-               highlight: st.highlight || p.highlight, uppercase: n(st.uppercase, p.uppercase), words_per_line: n(st.words_per_line, p.words_per_line) },
+      style: { preset, ...presetStyle(preset), position: st.position || p.position || "bottom", scale: n(st.scale, 1),
+               ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
       texts: (clip.texts || []).map(t => ({ ...t })),
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },

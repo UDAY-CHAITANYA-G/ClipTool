@@ -228,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
                                "default_facecam": render.DEFAULT_FACECAM, "default_cam_share": render.DEFAULT_CAM_SHARE,
                                "aspects": {k: {"label": v["label"], "size": v["size"], "cap_scale": v["cap_scale"],
                                                "bottom": v["bottom"], "top": v["top"]} for k, v in render.ASPECTS.items()},
-                               "fonts": render.FONTS, "quality": list(render.QUALITY)})
+                               "fonts": render.FONTS, "quality": list(render.QUALITY), "effects": render.EFFECTS})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/facecam", path)
         if m:
             run = _run_dir(m.group(1))

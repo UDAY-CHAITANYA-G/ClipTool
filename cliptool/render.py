@@ -30,7 +30,7 @@ ASPECTS: dict[str, dict] = {
 SIZES = {k: v["size"] for k, v in ASPECTS.items()}
 FITS = ("auto", "crop", "blur", "black", "stack")
 QUALITY = {"small": 24, "standard": 20, "high": 17}
-FONTS = ("Arial Black", "Impact", "Arial", "Segoe UI", "Segoe UI Black", "Bahnschrift", "Georgia",
+FONTS = ("Arial Black", "Impact", "Arial", "Segoe UI", "Segoe UI Semibold", "Segoe UI Black", "Bahnschrift", "Georgia",
          "Trebuchet MS", "Verdana", "Comic Sans MS", "Courier New")
 
 # Top-right corner, the most common facecam spot; the editor lets you move it.
@@ -113,6 +113,24 @@ PRESETS: dict[str, dict] = {
                   "italic": True, "outline_color": "#3B0A45", "shadow_color": "#FF8A00"},
 }
 PRESET_GROUPS = {"standard": "Standard", "gta": "GTA 6 themes"}
+EFFECTS = ("color", "box", "pop", "glow", "plain")  # how the spoken word is shown ("plain" = no highlight)
+
+
+def _style_defaults(p: dict) -> dict:
+    """Spell out every adjustable caption field for a preset, so the editor can change any of them."""
+    mode = p.get("mode", "color")
+    band = mode == "band"
+    d = {"bold": True, "italic": False, "outline_color": "#000000", "spacing": 0,
+         "shadow": 0 if band or mode == "glow" else (6 if p.get("shadow_color") else 2),
+         "shadow_color": "#000000", "shadow_opacity": 1.0 if p.get("shadow_color") else 0.5,
+         "background": band, "band_color": "#000000", "band_opacity": 0.75 if p.get("band_color") else 0.62}
+    out = {**d, **p}
+    if band:
+        out["mode"] = "plain"  # a band is "no highlight" + background on
+    return out
+
+
+PRESETS = {k: _style_defaults(v) for k, v in PRESETS.items()}
 POSITIONS = ("bottom", "middle", "top")
 
 
@@ -148,6 +166,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
+def _alpha(opacity: float) -> int:
+    return int(round((1 - min(1.0, max(0.0, float(opacity)))) * 255))
+
+
 def _caption_style_line(cap: dict, aspect: str) -> str:
     a = ASPECTS[aspect]
     font_size = int(float(cap["size"]) * a["cap_scale"] * float(cap.get("scale", 1.0)))
@@ -156,19 +178,18 @@ def _caption_style_line(cap: dict, aspect: str) -> str:
     margin_v = {"bottom": a["bottom"], "middle": 0, "top": a["top"]}.get(pos, 0)
     base = _ass_color(cap["color"])
     mode = cap.get("mode", "color")
-    outline = int(cap.get("outline", 4))
-    border_style, back, shadow = 1, "&H80000000", 2
-    if mode == "band":  # translucent box behind each line
+    if cap.get("background") or mode == "band":
+        # Box behind each line: libass fills it with the back colour; outline is the box padding.
         border_style, outline, shadow = 3, 14, 0
-        back = _ass_color(cap.get("band_color", "#000000"), alpha=0x40 if cap.get("band_color") else 0x60)
-    if mode == "glow":
-        shadow = 0
+        back = _ass_color(cap.get("band_color", "#000000"), alpha=_alpha(cap.get("band_opacity", 0.62)))
+    else:
+        border_style, outline, shadow = 1, int(cap.get("outline", 4)), int(cap.get("shadow", 2))
+        back = _ass_color(cap.get("shadow_color", "#000000"), alpha=_alpha(cap.get("shadow_opacity", 0.5)))
     out_col = _ass_color(cap["highlight"]) if mode == "glow" else _ass_color(cap.get("outline_color", "#000000"))
-    if cap.get("shadow_color"):
-        back, shadow = _ass_color(cap["shadow_color"]), 6  # solid offset shadow (Vice City look)
+    bold = -1 if cap.get("bold", True) else 0
     italic = -1 if cap.get("italic") else 0
     spacing = int(cap.get("spacing", 0))
-    return (f"Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,{italic},0,0,100,100,{spacing},0,"
+    return (f"Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},{bold},{italic},0,0,100,100,{spacing},0,"
             f"{border_style},{outline},{shadow},{align},70,70,{margin_v},1")
 
 
@@ -177,6 +198,7 @@ def caption_events(words: list[dict], clip_start: float, clip_end: float, cap: d
     hi, base = _ass_color(cap["highlight"]), _ass_color(cap["color"])
     mode = cap.get("mode", "color")
     outline = int(cap.get("outline", 4))
+    oc, shad = _ass_color(cap.get("outline_color", "#000000")), int(cap.get("shadow", 2))
     n = max(1, int(cap["words_per_line"]))
     upper = bool(cap.get("uppercase", True))
     words = [w for w in words if clip_start - 0.05 <= w["s"] < clip_end]
@@ -201,7 +223,7 @@ def caption_events(words: list[dict], clip_start: float, clip_end: float, cap: d
                 text = f"{{\\c{hi}\\fscx125\\fscy125\\t(0,90,\\fscx100\\fscy100)}}{toks[k]}"
             elif mode == "box":
                 # Thick outline in the highlight colour reads as a box behind the active word.
-                text = " ".join(f"{{\\3c{hi}\\bord{outline + 14}\\shad0}}{t}{{\\3c&H00000000&\\bord{outline}\\shad2}}"
+                text = " ".join(f"{{\\3c{hi}\\bord{outline + 14}\\shad0}}{t}{{\\3c{oc}\\bord{outline}\\shad{shad}}}"
                                 if x == k else t for x, t in enumerate(toks))
             else:  # color, glow
                 text = " ".join(f"{{\\c{hi}}}{t}{{\\c{base}}}" if x == k else t for x, t in enumerate(toks))

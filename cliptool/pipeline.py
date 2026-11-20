@@ -131,7 +131,9 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
 
 # ---- editing one clip -------------------------------------------------------
 
-EDITABLE_STYLE = {"preset", "position", "scale", "color", "highlight", "font", "uppercase", "words_per_line"}
+EDITABLE_STYLE = {"preset", "position", "scale", "color", "highlight", "font", "uppercase", "words_per_line",
+                  "bold", "italic", "mode", "outline", "outline_color", "shadow", "shadow_color", "shadow_opacity",
+                  "spacing", "background", "band_color", "band_opacity"}
 
 
 def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
@@ -285,6 +287,20 @@ def clean_changes(changes: dict, duration: float) -> dict:
             st["uppercase"] = bool(st["uppercase"])
         if "font" in st:
             st["font"] = re.sub(r"[^A-Za-z0-9 \-]", "", str(st["font"]))[:40] or None
+        for col in ("outline_color", "shadow_color", "band_color"):
+            if col in st and not HEX.fullmatch(str(st[col])):
+                raise ValueError("Colours must look like #RRGGBB.")
+        if "mode" in st and st["mode"] not in render.EFFECTS:
+            raise ValueError("Unknown highlight effect.")
+        for key, lo, hi in (("outline", 0, 12), ("shadow", 0, 12), ("spacing", -2, 20)):
+            if key in st:
+                st[key] = int(min(hi, max(lo, float(st[key]))))
+        for key in ("shadow_opacity", "band_opacity"):
+            if key in st:
+                st[key] = round(min(1.0, max(0.0, float(st[key]))), 2)
+        for key in ("bold", "italic", "background"):
+            if key in st:
+                st[key] = bool(st[key])
         out["style"] = st
     return out
 

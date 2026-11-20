@@ -182,3 +182,21 @@ def test_gta_theme_presets():
     assert ",5,70,70,0," in wasted and ",100,100,3,0," in wasted  # centred, letter-spaced
     phone = build_ass(words, 0, 2, (1080, 1920), caption_style({}, {"preset": "phone"}), "vertical")
     assert ",&H404B1B1E," in phone and ",8,70,70,300," in phone  # indigo band, top
+
+
+def test_custom_caption_fields():
+    from cliptool.pipeline import clean_changes
+    from cliptool.render import build_ass, caption_style
+
+    words = [{"w": "now", "s": 0.0, "e": 0.5}, {"w": "where", "s": 0.5, "e": 1.0}]
+    style_line = lambda o: [l for l in build_ass(words, 0, 2, (1080, 1920), caption_style({}, o), "vertical").splitlines()
+                            if l.startswith("Style: Cap,")][0].split(",")
+    # Style fields: 7 Bold, 8 Italic, 13 Spacing, 15 BorderStyle, 16 Outline, 17 Shadow
+    clean = style_line({"preset": "vice", "outline": 0, "shadow": 0})
+    assert clean[16] == "0" and clean[17] == "0"
+    custom = style_line({"preset": "highlight", "bold": False, "italic": True, "spacing": 8, "font": "Georgia"})
+    assert custom[1] == "Georgia" and custom[7] == "0" and custom[8] == "-1" and custom[13] == "8"
+    band = style_line({"preset": "vice", "background": True, "band_color": "#112233", "band_opacity": 1.0})
+    assert band[15] == "3" and band[6] == "&H00332211"
+    ok = clean_changes({"style": {"preset": "vice", "outline": 99, "shadow": -3, "mode": "plain", "background": 1}}, 100)
+    assert ok["style"]["outline"] == 12 and ok["style"]["shadow"] == 0 and ok["style"]["background"] is True

@@ -1,0 +1,309 @@
+"""Local website: paste a link, watch progress, play and download clips.
+
+Standard library only. Binds to 127.0.0.1 by default; one job runs at a time.
+
+  GET  /                         the app page
+  POST /api/jobs                 start a job {url, count, min, max, aspect, fit, captions}
+  GET  /api/jobs/<id>            job status, stage, progress, log tail, result
+  POST /api/jobs/<id>/cancel     stop after the current step
+  GET  /api/library              previous runs found in output/
+  GET  /api/library/<folder>     one run's clips.json
+  GET  /files/<folder>/<path>    clip files (with HTTP Range support for video seeking)
+  DELETE /api/library/<folder>   delete one run (its clips + cached download)
+  DELETE /api/library            delete all runs and the whole work/ cache
+"""
+from __future__ import annotations
+
+import json
+import mimetypes
+import re
+import threading
+import traceback
+import uuid
+import webbrowser
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+from . import pipeline
+from .fetch import video_id_from_url
+
+STATIC = Path(__file__).parent / "static"
+OUTPUT = Path("output").resolve()
+WORK = Path("work").resolve()
+
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
+
+
+def _running_job() -> dict | None:
+    return next((j for j in JOBS.values() if j["status"] == "running"), None)
+
+
+def _run_job(job: dict, opts: pipeline.Options) -> None:
+    def log(msg: str):
+        for line in str(msg).splitlines() or [""]:
+            job["log"].append(line)
+        del job["log"][:-300]
+        print(msg, flush=True)
+
+    def stage(name: str, p: float):
+        job["stage"], job["progress"] = name, round(p, 3)
+
+    try:
+        res = pipeline.run(opts, log=log, stage=stage, cancelled=lambda: job["cancel"])
+        job["result"] = {"folder": res["out_dir"].name, "title": res["info"]["title"],
+                         "seconds": res["seconds"], "clips": res["clips"]}
+        job["status"] = "done"
+    except pipeline.Cancelled:
+        job["status"], job["stage"] = "cancelled", "Cancelled"
+    except Exception as e:  # report any failure to the page
+        log(traceback.format_exc(limit=3))
+        job["status"], job["error"] = "error", str(e) or e.__class__.__name__
+
+
+def _library() -> list[dict]:
+    items = []
+    if not OUTPUT.exists():
+        return items
+    for f in OUTPUT.glob("*/clips.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        clips = d.get("clips", [])
+        items.append({
+            "folder": f.parent.name, "title": d["video"].get("title"), "channel": d["video"].get("channel"),
+            "count": len(clips), "rendered": d.get("settings", {}).get("rendered", True),
+            "thumbnail": next((c["thumbnail"] for c in clips if c.get("thumbnail")), None),
+            "mtime": f.stat().st_mtime,
+        })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return items
+
+
+def _run_dir(folder: str) -> Path | None:
+    """An output run folder by name, only if it sits directly inside output/."""
+    p = (OUTPUT / folder).resolve()
+    return p if p.parent == OUTPUT and p.is_dir() else None
+
+
+def _delete_run(run: Path) -> dict:
+    """Delete one run's clips and, if no other run uses it, its cached download in work/."""
+    import shutil
+
+    freed = 0
+    cache = None
+    try:
+        d = json.loads((run / "clips.json").read_text(encoding="utf-8"))
+        wd = Path(d.get("settings", {}).get("work_dir", "")).resolve()
+        if wd.parent == WORK and wd.is_dir():
+            others = [f for f in OUTPUT.glob(f"*_{wd.name}") if f.resolve() != run]
+            cache = None if others else wd
+    except Exception:
+        pass
+    for target in (run, cache):
+        if target and target.exists():
+            freed += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+            shutil.rmtree(target)
+    return {"deleted": run.name, "freed_mb": round(freed / 1e6, 1)}
+
+
+def _clear_all() -> dict:
+    import shutil
+
+    freed, n = 0, 0
+    for base in (OUTPUT, WORK):
+        if not base.exists():
+            continue
+        for child in base.iterdir():
+            freed += sum(f.stat().st_size for f in child.rglob("*") if f.is_file()) if child.is_dir() else child.stat().st_size
+            if base == OUTPUT and child.is_dir():
+                n += 1
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+    return {"deleted_runs": n, "freed_mb": round(freed / 1e6, 1)}
+
+
+def _safe_join(base: Path, rel: str) -> Path | None:
+    p = (base / rel).resolve()
+    try:
+        p.relative_to(base)
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "ClipTool"
+
+    def log_message(self, fmt, *args):  # keep the console for pipeline output
+        pass
+
+    # ---- helpers -------------------------------------------------------
+    def _json(self, data, status=HTTPStatus.OK):
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _error(self, msg, status=HTTPStatus.BAD_REQUEST):
+        self._json({"error": msg}, status)
+
+    def _file(self, path: Path, download: bool = False):
+        size = path.stat().st_size
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        start, end = 0, size - 1
+        rng = self.headers.get("Range")
+        m = re.match(r"bytes=(\d*)-(\d*)$", rng or "")
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+            else:
+                start = max(0, size - int(m.group(2)))
+            end = min(end, size - 1)
+            if start > end:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            self.send_response(HTTPStatus.PARTIAL_CONTENT)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if download:
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = f.read(min(1 << 16, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+                pass  # browser stopped reading (seek / close) - normal for video
+
+    # ---- routes --------------------------------------------------------
+    def do_GET(self):
+        url = urlparse(self.path)
+        path = unquote(url.path)
+        if path in ("/", "/index.html"):
+            return self._file(STATIC / "index.html")
+        if path.startswith("/static/"):
+            p = _safe_join(STATIC.resolve(), path[len("/static/"):])
+            return self._file(p) if p else self._error("not found", HTTPStatus.NOT_FOUND)
+        if path == "/api/library":
+            return self._json({"items": _library()})
+        m = re.fullmatch(r"/api/library/([^/]+)", path)
+        if m:
+            p = _safe_join(OUTPUT, f"{m.group(1)}/clips.json")
+            if not p:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            return self._json(json.loads(p.read_text(encoding="utf-8")))
+        m = re.fullmatch(r"/api/jobs/([a-f0-9]+)", path)
+        if m:
+            job = JOBS.get(m.group(1))
+            if not job:
+                return self._error("no such job", HTTPStatus.NOT_FOUND)
+            return self._json({k: v for k, v in job.items() if k != "cancel"})
+        if path == "/api/jobs":
+            running = _running_job()
+            return self._json({"running": running["id"] if running else None})
+        m = re.fullmatch(r"/files/(.+)", path)
+        if m:
+            p = _safe_join(OUTPUT, m.group(1))
+            if not p:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            return self._file(p, download="download=1" in (url.query or ""))
+        self._error("not found", HTTPStatus.NOT_FOUND)
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path == "/api/jobs":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                return self._error("invalid JSON")
+            url = str(body.get("url", "")).strip()
+            try:
+                video_id_from_url(url)
+            except ValueError as e:
+                return self._error(str(e))
+            try:
+                count = int(body.get("count") or 5)
+                min_s = float(body.get("min") or 20)
+                max_s = float(body.get("max") or 60)
+            except (TypeError, ValueError):
+                return self._error("count, min and max must be numbers")
+            if not (1 <= count <= 20 and 5 <= min_s < max_s <= 180):
+                return self._error("Use 1-20 clips and a length range between 5 and 180 seconds (min < max).")
+            aspect = body.get("aspect", "vertical")
+            fit = body.get("fit", "auto")
+            if aspect not in ("vertical", "square", "original") or fit not in ("auto", "crop", "blur"):
+                return self._error("bad aspect or framing")
+            with JOBS_LOCK:
+                if _running_job():
+                    return self._error("A job is already running; wait for it or cancel it.", HTTPStatus.CONFLICT)
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "url": url, "status": "running", "stage": "Starting", "progress": 0.0,
+                       "log": [], "result": None, "error": None, "cancel": False}
+                JOBS[jid] = job
+            opts = pipeline.Options(url=url, count=count, min_s=min_s, max_s=max_s, aspect=aspect, fit=fit,
+                                    captions=bool(body.get("captions", True)), out=OUTPUT, work=WORK)
+            threading.Thread(target=_run_job, args=(job, opts), daemon=True).start()
+            return self._json({"id": jid}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/jobs/([a-f0-9]+)/cancel", path)
+        if m:
+            job = JOBS.get(m.group(1))
+            if not job:
+                return self._error("no such job", HTTPStatus.NOT_FOUND)
+            job["cancel"] = True
+            return self._json({"ok": True})
+        self._error("not found", HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self):
+        path = unquote(urlparse(self.path).path)
+        with JOBS_LOCK:
+            if _running_job():
+                return self._error("A job is running; wait for it to finish or cancel it first.", HTTPStatus.CONFLICT)
+            try:
+                if path == "/api/library":
+                    return self._json(_clear_all())
+                m = re.fullmatch(r"/api/library/([^/]+)", path)
+                if m:
+                    run = _run_dir(m.group(1))
+                    if not run:
+                        return self._error("not found", HTTPStatus.NOT_FOUND)
+                    return self._json(_delete_run(run))
+            except PermissionError:
+                return self._error("A file is still open (playing video or another program). Close it and try again.",
+                                   HTTPStatus.CONFLICT)
+        self._error("not found", HTTPStatus.NOT_FOUND)
+
+
+def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    httpd = ThreadingHTTPServer((host, port), Handler)
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
+    print(f"ClipTool is running at {url}  (Ctrl+C to stop)", flush=True)
+    print(f"Clips are saved in {OUTPUT}", flush=True)
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        httpd.server_close()

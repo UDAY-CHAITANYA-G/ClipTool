@@ -1,0 +1,34 @@
+# ClipTool settings. Command-line options override [clips] values.
+
+[weights]
+heatmap = 0.35
+audio   = 0.20
+hooks   = 0.30
+pacing  = 0.15
+chapter_cross_penalty = 0.10
+ai_blend = 0.5          # share of the final score that comes from Claude
+
+[clips]
+count = 5
+min_seconds = 20
+max_seconds = 60
+max_overlap = 0.3
+finalists_for_ai = 30
+
+[captions]
+font = "Arial Black"
+size = 78
+words_per_line = 3
+color = "#FFFFFF"
+highlight = "#FFD400"
+outline = 5
+margin_bottom = 520     # pixels from the bottom of a 1920-high frame (lower third)
+
+[encode]
+crf = 20
+preset = "medium"
+loudness_lufs = -14
+
+[ai]
+model = "claude-opus-5-5"
+effort = "medium"

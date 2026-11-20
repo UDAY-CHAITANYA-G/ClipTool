@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipTool</title>
+<style>
+:root{
+  --bg:#f5f4f0;--panel:#ffffff;--ink:#1c1c1a;--quiet:#6a6a64;--line:#e3e1da;--soft:#efede7;
+  --accent:#e2531c;--accent-ink:#ffffff;--good:#2f8f4e;--bad:#c23b2a;--radius:14px;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121211;--panel:#1c1c1a;--ink:#efeee9;--quiet:#a2a19a;--line:#2f2e2b;--soft:#252522;
+  --accent:#ff7a3d;--accent-ink:#1a0d06;--good:#5cc27f;--bad:#f0745f;}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent)}
+.wrap{max-width:1240px;margin:0 auto;padding:0 16px}
+header{padding:22px 0 6px;display:flex;align-items:center;gap:12px}
+.logo{width:34px;height:34px;border-radius:9px;background:var(--accent);display:grid;place-items:center;color:var(--accent-ink);font-weight:800}
+header h1{font-size:20px;margin:0}
+header p{margin:0;color:var(--quiet);font-size:13px}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+form .row{display:flex;gap:10px;flex-wrap:wrap}
+.url{flex:1 1 420px;font:inherit;font-size:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+.url:focus,select:focus,input[type=number]:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);padding:8px 12px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:650;padding:12px 22px;font-size:15px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.opts{display:flex;flex-wrap:wrap;gap:14px 22px;margin-top:14px;color:var(--quiet);font-size:13px;align-items:end}
+.opts label{display:flex;flex-direction:column;gap:4px}
+.opts select,.opts input[type=number]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:90px}
+.opts .check{flex-direction:row;align-items:center;gap:6px;padding-bottom:6px}
+.msg{margin-top:10px;font-size:13px;color:var(--bad);min-height:1em}
+
+.job{margin-top:16px;display:none}
+.job.on{display:block}
+.jobtop{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.stage{font-weight:650}
+.pct{color:var(--quiet);font-variant-numeric:tabular-nums}
+.bar{height:8px;background:var(--soft);border-radius:4px;margin:10px 0;overflow:hidden}
+.bar span{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+.job.done .bar span{background:var(--good)} .job.error .bar span{background:var(--bad)}
+details.log summary{cursor:pointer;color:var(--quiet);font-size:13px}
+details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10px;border-radius:8px;font-size:12px;white-space:pre-wrap;margin:8px 0 0}
+
+.layout{display:grid;grid-template-columns:1fr 280px;gap:18px;margin:18px 0 40px}
+@media (max-width:900px){.layout{grid-template-columns:1fr}}
+.results h2,.library h2{font-size:15px;margin:0 0 10px}
+.results .sub{color:var(--quiet);font-size:13px;margin:-6px 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column}
+.card video{width:100%;display:block;background:#000;aspect-ratio:9/16;object-fit:contain}
+.card.ar-square video{aspect-ratio:1/1} .card.ar-original video{aspect-ratio:16/9}
+.card .nofile{aspect-ratio:9/16;display:grid;place-items:center;color:var(--quiet);font-size:13px;background:var(--soft)}
+.card .body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
+.cardtop{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.rank{font-weight:800;color:var(--accent)}
+.score{font-variant-numeric:tabular-nums;color:var(--quiet)}
+.mini{height:4px;background:var(--soft);border-radius:2px}.mini span{display:block;height:100%;background:var(--accent);border-radius:2px}
+.card h3{font-size:15px;margin:2px 0 0;line-height:1.3}
+.hook{margin:0;font-size:13px;font-style:italic}
+.reason,.meta{margin:0;font-size:12.5px;color:var(--quiet)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--soft);color:var(--quiet)}
+.actions{display:flex;gap:6px;margin-top:auto;padding-top:6px}
+.actions a,.actions button{font-size:12.5px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);text-decoration:none;color:var(--ink);background:transparent}
+.empty{color:var(--quiet);font-size:14px;padding:30px;text-align:center;border:1px dashed var(--line);border-radius:var(--radius)}
+
+.library .item{display:flex;gap:10px;padding:8px;border-radius:10px;cursor:pointer;border:1px solid transparent}
+.library .item:hover,.library .item.sel{background:var(--panel);border-color:var(--line)}
+.library img,.library .ph{width:44px;height:78px;object-fit:cover;border-radius:6px;background:var(--soft);flex:none}
+.library .t{font-size:13px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.library .s{font-size:12px;color:var(--quiet)}
+footer{color:var(--quiet);font-size:12px;padding:0 0 30px}
+.headrow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 10px}
+.headrow h2{margin:0}
+button.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line));font-size:12.5px;padding:5px 10px}
+button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.library .item{position:relative;align-items:flex-start}
+.library .item .x{position:absolute;top:6px;right:6px;width:24px;height:24px;padding:0;border-radius:6px;font-size:15px;line-height:1;
+  color:var(--quiet);opacity:0;border-color:transparent}
+.library .item:hover .x,.library .item.sel .x,.library .item .x:focus{opacity:1}
+.library .item .x:hover{color:var(--bad);border-color:var(--line)}
+@media (hover:none){.library .item .x{opacity:1}}
+.library .item > div:last-of-type{padding-right:24px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:10px;
+  font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">✂</div>
+    <div><h1>ClipTool</h1><p>Paste a YouTube link. Get the best moments as ready-to-post shorts. Runs fully on this computer.</p></div>
+  </header>
+
+  <section class="panel">
+    <form id="f">
+      <div class="row">
+        <input class="url" id="url" type="url" placeholder="https://www.youtube.com/watch?v=..." required autocomplete="off">
+        <button class="primary" id="go" type="submit">Find clips</button>
+      </div>
+      <div class="opts">
+        <label>Clips<input id="count" type="number" min="1" max="20" value="5"></label>
+        <label>Min length (s)<input id="min" type="number" min="5" max="175" value="20"></label>
+        <label>Max length (s)<input id="max" type="number" min="10" max="180" value="60"></label>
+        <label>Format
+          <select id="aspect"><option value="vertical">Vertical 9:16</option><option value="square">Square 1:1</option><option value="original">Original 16:9</option></select></label>
+        <label>Framing
+          <select id="fit"><option value="auto">Auto (follow speaker)</option><option value="crop">Centre crop</option><option value="blur">Full frame + blur</option></select></label>
+        <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
+      </div>
+      <div class="msg" id="msg"></div>
+    </form>
+
+    <div class="job" id="job">
+      <div class="jobtop">
+        <div><span class="stage" id="stage">Starting</span></div>
+        <div><span class="pct" id="pct">0%</span> <button type="button" id="cancel">Cancel</button></div>
+      </div>
+      <div class="bar"><span id="barfill"></span></div>
+      <details class="log"><summary>Details</summary><pre id="log"></pre></details>
+    </div>
+  </section>
+
+  <div class="layout">
+    <section class="results">
+      <div class="headrow"><h2 id="rtitle">Clips</h2><button type="button" class="danger" id="delrun" hidden>Delete this run</button></div>
+      <p class="sub" id="rsub"></p>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="empty">No clips yet. Paste a link above, or open a previous run on the right.</div>
+    </section>
+    <aside class="library">
+      <div class="headrow"><h2>Previous runs</h2><button type="button" class="danger" id="clearall" hidden>Clear all</button></div>
+      <div id="lib"></div>
+    </aside>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer>Only clip videos you own or have permission to use. Files are saved in the <code>output</code> folder.</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = t => { t = Math.floor(t); const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;
+  return (h ? h + ":" + String(m).padStart(2,"0") : m) + ":" + String(s).padStart(2,"0"); };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let pollTimer = null, currentFolder = null;
+
+function setBusy(b){ $("go").disabled = b; $("go").textContent = b ? "Working..." : "Find clips"; }
+
+function showJob(j){
+  const box = $("job"); box.className = "job on " + (j.status === "running" ? "" : j.status);
+  const pct = Math.round((j.progress || 0) * 100);
+  $("stage").textContent = j.status === "error" ? "Failed: " + (j.error || "unknown error")
+    : j.status === "done" ? "Done" + (j.result ? " in " + Math.round(j.result.seconds) + " s" : "")
+    : j.stage;
+  $("pct").textContent = pct + "%";
+  $("barfill").style.width = (j.status === "done" ? 100 : pct) + "%";
+  $("cancel").style.display = j.status === "running" ? "" : "none";
+  const log = $("log"); const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.textContent = (j.log || []).join("\n"); if (atEnd) log.scrollTop = log.scrollHeight;
+}
+
+async function poll(id){
+  clearTimeout(pollTimer);
+  try {
+    const r = await fetch("/api/jobs/" + id); const j = await r.json();
+    showJob(j);
+    if (j.status === "running") { pollTimer = setTimeout(() => poll(id), 1000); return; }
+    setBusy(false);
+    if (j.status === "done") { await loadLibrary(); openRun(j.result.folder); }
+  } catch (e) { pollTimer = setTimeout(() => poll(id), 2000); }
+}
+
+$("f").addEventListener("submit", async e => {
+  e.preventDefault(); $("msg").textContent = "";
+  const body = { url: $("url").value.trim(), count: +$("count").value, min: +$("min").value, max: +$("max").value,
+                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked };
+  if (body.min >= body.max) { $("msg").textContent = "Min length must be smaller than max length."; return; }
+  setBusy(true);
+  const r = await fetch("/api/jobs", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok) { setBusy(false); $("msg").textContent = d.error || "Could not start."; return; }
+  showJob({ status: "running", stage: "Starting", progress: 0, log: [] });
+  poll(d.id);
+});
+
+$("cancel").addEventListener("click", async () => {
+  const r = await fetch("/api/jobs"); const d = await r.json();
+  if (d.running) { await fetch("/api/jobs/" + d.running + "/cancel", { method: "POST" }); $("stage").textContent = "Cancelling after this step..."; }
+});
+
+function card(c, folder, aspect){
+  const base = "/files/" + encodeURIComponent(folder) + "/";
+  const sig = Object.entries(c.signals || {}).filter(([,v]) => v !== null && v !== undefined)
+    .map(([k,v]) => `<span class="chip">${esc(k)} ${(+v).toFixed(2)}</span>`).join("");
+  const media = c.file
+    ? `<video controls preload="metadata" playsinline poster="${c.thumbnail ? base + esc(c.thumbnail) : ""}" src="${base + esc(c.file)}"></video>`
+    : `<div class="nofile">Not rendered</div>`;
+  return `<article class="card ar-${esc(aspect)}">${media}<div class="body">
+    <div class="cardtop"><span class="rank">#${c.rank}</span><span class="score">score ${(+c.score).toFixed(2)}</span></div>
+    <div class="mini"><span style="width:${Math.max(0, Math.min(1, c.score)) * 100}%"></span></div>
+    <h3>${esc(c.title)}</h3>
+    <p class="hook">“${esc(c.hook)}”</p>
+    <p class="reason">${esc(c.reason)}</p>
+    <p class="meta"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${fmt(c.start)}–${fmt(c.end)}</a> · ${Math.round(c.duration)} s</p>
+    <div class="chips">${sig}</div>
+    <div class="actions">
+      ${c.file ? `<a href="${base + esc(c.file)}?download=1">Download</a>` : ""}
+      <button type="button" data-copy="${esc(c.title)}">Copy title</button>
+      <button type="button" data-copy="${esc(c.transcript)}">Copy text</button>
+    </div></div></article>`;
+}
+
+async function openRun(folder){
+  currentFolder = folder;
+  document.querySelectorAll(".library .item").forEach(el => el.classList.toggle("sel", el.dataset.folder === folder));
+  const r = await fetch("/api/library/" + encodeURIComponent(folder)); if (!r.ok) return;
+  const d = await r.json();
+  $("rtitle").textContent = d.video.title;
+  $("rsub").innerHTML = `${esc(d.video.channel || "")} · ${d.clips.length} clips · <a href="${esc(d.video.webpage_url)}" target="_blank" rel="noopener">source video</a>`;
+  $("grid").innerHTML = d.clips.map(c => card(c, folder, d.settings.aspect)).join("");
+  $("empty").style.display = d.clips.length ? "none" : "";
+  $("delrun").hidden = false;
+}
+
+$("grid").addEventListener("click", e => {
+  const b = e.target.closest("[data-copy]"); if (!b) return;
+  navigator.clipboard.writeText(b.dataset.copy).then(() => { const t = b.textContent; b.textContent = "Copied"; setTimeout(() => b.textContent = t, 1200); });
+});
+
+async function loadLibrary(){
+  const r = await fetch("/api/library"); const d = await r.json();
+  $("lib").innerHTML = d.items.length ? d.items.map(it => `
+    <div class="item" data-folder="${esc(it.folder)}" data-title="${esc(it.title)}">
+      ${it.thumbnail ? `<img alt="" src="/files/${encodeURIComponent(it.folder)}/${esc(it.thumbnail)}">` : `<div class="ph"></div>`}
+      <div><div class="t">${esc(it.title)}</div><div class="s">${esc(it.channel || "")} · ${it.count} clips</div></div>
+      <button type="button" class="x" title="Delete this run" aria-label="Delete ${esc(it.title)}">×</button>
+    </div>`).join("") : `<div class="s" style="color:var(--quiet);font-size:13px">Nothing yet.</div>`;
+  document.querySelectorAll(".library .item").forEach(el => {
+    el.addEventListener("click", e => {
+      if (e.target.closest(".x")) { e.stopPropagation(); deleteRun(el.dataset.folder, el.dataset.title); }
+      else openRun(el.dataset.folder);
+    });
+  });
+  $("clearall").hidden = !d.items.length;
+  return d.items;
+}
+
+function toast(text){
+  const t = $("toast"); t.textContent = text; t.classList.add("on");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("on"), 3000);
+}
+
+function releaseVideos(){
+  // Windows can't delete a file the page is still streaming, so stop every player first.
+  document.querySelectorAll("video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });
+}
+
+function showEmpty(){
+  currentFolder = null;
+  $("rtitle").textContent = "Clips"; $("rsub").textContent = ""; $("grid").innerHTML = "";
+  $("empty").style.display = ""; $("delrun").hidden = true;
+}
+
+async function deleteRun(folder, title){
+  if (!confirm(`Delete "${title}"?\n\nThis permanently removes its clips and the downloaded video. It can't be undone.`)) return;
+  if (folder === currentFolder) releaseVideos();
+  const r = await fetch("/api/library/" + encodeURIComponent(folder), { method: "DELETE" });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Could not delete."); if (folder === currentFolder) openRun(folder); return; }
+  toast(`Deleted · ${d.freed_mb} MB freed`);
+  const items = await loadLibrary();
+  if (folder === currentFolder) { items.length ? openRun(items[0].folder) : showEmpty(); }
+}
+
+$("delrun").addEventListener("click", () => {
+  if (currentFolder) deleteRun(currentFolder, $("rtitle").textContent);
+});
+
+$("clearall").addEventListener("click", async () => {
+  const n = document.querySelectorAll(".library .item").length;
+  if (!confirm(`Delete all ${n} run${n === 1 ? "" : "s"}?\n\nThis permanently removes every clip and every downloaded video. It can't be undone.`)) return;
+  releaseVideos();
+  const r = await fetch("/api/library", { method: "DELETE" });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Could not clear."); if (currentFolder) openRun(currentFolder); return; }
+  toast(`Cleared ${d.deleted_runs} run${d.deleted_runs === 1 ? "" : "s"} · ${d.freed_mb} MB freed`);
+  await loadLibrary(); showEmpty();
+});
+
+(async () => {
+  const items = await loadLibrary();
+  const r = await fetch("/api/jobs"); const d = await r.json();
+  if (d.running) { setBusy(true); poll(d.running); }
+  else if (items.length) openRun(items[0].folder);
+})();
+</script>
+</body>
+</html>

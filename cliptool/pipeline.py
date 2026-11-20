@@ -151,6 +151,45 @@ def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
     return data, info, sentences, source
 
 
+HEX = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+def clean_texts(texts) -> list[dict]:
+    """Validate text overlays (max 12)."""
+    if not isinstance(texts, list):
+        raise ValueError("Text overlays must be a list.")
+    if len(texts) > 12:
+        raise ValueError("At most 12 text boxes per clip.")
+    out = []
+    for t in texts:
+        if not isinstance(t, dict):
+            raise ValueError("Bad text box.")
+        text = str(t.get("text", "")).strip()[:300]
+        if not text:
+            continue
+        item = {
+            "id": re.sub(r"[^a-z0-9]", "", str(t.get("id", "")))[:12] or f"t{len(out)}",
+            "text": text,
+            "x": min(1.0, max(0.0, float(t.get("x", 0.5)))), "y": min(1.0, max(0.0, float(t.get("y", 0.15)))),
+            "size": int(min(300, max(16, float(t.get("size", 72))))),
+            "font": t.get("font") if t.get("font") in render.FONTS else "Arial Black",
+            "bold": bool(t.get("bold", True)), "italic": bool(t.get("italic", False)),
+            "outline": int(min(12, max(0, float(t.get("outline", 4))))), "shadow": bool(t.get("shadow", True)),
+            "box": bool(t.get("box", False)), "box_opacity": min(1.0, max(0.1, float(t.get("box_opacity", 0.85)))),
+            "start": max(0.0, float(t.get("start", 0))), "end": max(0.1, float(t.get("end", 3))),
+            "anim": t.get("anim") if t.get("anim") in ("none", "fade", "pop") else "fade",
+        }
+        for col, default in (("color", "#FFFFFF"), ("outline_color", "#000000"), ("box_color", "#000000")):
+            val = str(t.get(col, default))
+            if not HEX.fullmatch(val):
+                raise ValueError("Colours must look like #RRGGBB.")
+            item[col] = val
+        if item["end"] <= item["start"]:
+            raise ValueError(f'Text "{text[:20]}" must end after it starts.')
+        out.append(item)
+    return out
+
+
 def clean_changes(changes: dict, duration: float) -> dict:
     """Validate an edit request from the website. Raises ValueError with a readable message."""
     out: dict = {}
@@ -195,9 +234,32 @@ def clean_changes(changes: dict, duration: float) -> dict:
                     and fc["x"] + fc["w"] <= 1.001 and fc["y"] + fc["h"] <= 1.001):
                 raise ValueError("Facecam box must be inside the video.")
             out["facecam"] = {k: round(v, 4) for k, v in fc.items()}
-    for key in ("game_x", "crop_x"):
+    # Numeric settings: (key, low, high). None means "not set" and is kept as None.
+    for key, lo, hi in (("game_x", 0, 1), ("game_y", 0, 1), ("crop_x", 0, 1), ("crop_y", 0, 1),
+                        ("zoom", 1, 3), ("game_zoom", 1, 3), ("cam_share", 0.15, 0.7), ("speed", 0.5, 2),
+                        ("volume", 0, 2), ("fade_in", 0, 3), ("fade_out", 0, 3), ("cover_t", 0, 600)):
         if key in changes:
-            out[key] = round(min(1.0, max(0.0, float(changes[key]))), 4)
+            v = changes[key]
+            out[key] = None if v is None else round(min(hi, max(lo, float(v))), 4)
+    if "cam_pos" in changes:
+        if changes["cam_pos"] not in ("top", "bottom"):
+            raise ValueError("Facecam position must be top or bottom.")
+        out["cam_pos"] = changes["cam_pos"]
+    if "mute" in changes:
+        out["mute"] = bool(changes["mute"])
+    if "quality" in changes:
+        if changes["quality"] not in render.QUALITY:
+            raise ValueError("Unknown export quality.")
+        out["quality"] = changes["quality"]
+    if "progress_bar" in changes:
+        pb = changes["progress_bar"] or {}
+        col = str(pb.get("color", "#FFD400"))
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", col):
+            raise ValueError("Colours must look like #RRGGBB.")
+        out["progress_bar"] = {"on": bool(pb.get("on")), "color": col,
+                               "position": "top" if pb.get("position") == "top" else "bottom"}
+    if "texts" in changes:
+        out["texts"] = clean_texts(changes["texts"])
     if "filters" in changes:
         f = changes["filters"] or {}
         clean = {}

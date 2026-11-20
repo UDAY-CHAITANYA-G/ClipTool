@@ -116,3 +116,54 @@ def test_clean_changes_validates():
                 {"style": {"preset": "box", "color": "red"}}, {"start": 90, "end": 120}):
         with pytest.raises(ValueError):
             clean_changes(bad, 100)
+
+
+def test_window_respects_aspect_zoom_and_bounds():
+    from cliptool.render import window
+
+    w, h, x, y = window(1920, 1080, 9 / 16, 1.0, 0.5, 0.5)
+    assert h == 1080 and abs(w / h - 9 / 16) < 0.01 and x == (1920 - w) // 2
+    w2, h2, x2, y2 = window(1920, 1080, 9 / 16, 2.0, 1.0, 0.0)  # zoomed, pushed to the top-right corner
+    assert h2 == 540 and x2 + w2 <= 1920 and y2 == 0 and x2 == 1920 - w2
+    w3, h3, _, _ = window(1920, 1080, 3.0, 1.0, 0.5, 0.5)  # wider than the source: full width
+    assert w3 == 1920 and h3 == 640
+
+
+def test_text_overlays_and_speed_in_ass():
+    from cliptool.render import build_ass, caption_style
+
+    words = [{"w": "hello", "s": 10.0, "e": 10.4}, {"w": "world", "s": 11.0, "e": 11.5}]
+    texts = [{"text": "TITLE", "x": 0.5, "y": 0.1, "size": 90, "color": "#FFD400", "box": True,
+              "box_color": "#000000", "start": 0, "end": 2, "anim": "pop"}]
+    ass = build_ass(words, 10.0, 14.0, (1080, 1920), caption_style({}, None), "vertical", speed=2.0, texts=texts)
+    assert r"\pos(540,192)" in ass and ",TxtBox," in ass and "TITLE" in ass
+    assert "Dialogue: 0,0:00:00.50," in ass  # 'world' at source 11.0 -> 0.5 s at 2x speed
+    no_caps = build_ass(words, 10.0, 14.0, (1080, 1350), caption_style({}, None), "portrait", texts=texts, captions=False)
+    assert ",Cap,," not in no_caps and "TITLE" in no_caps
+
+
+def test_video_filter_extras():
+    from cliptool.render import _video_filter
+
+    clip = {"speed": 1.5, "fade_in": 0.5, "fade_out": 1.0, "progress_bar": {"on": True, "color": "#FF0000"},
+            "filters": {"saturation": 0}}
+    g = _video_filter("vertical", "blur", True, None, None, clip, out_dur=10.0, subs=True)
+    for part in ("setpts=PTS/1.5000", "fade=t=in:st=0:d=0.50", "fade=t=out:st=9.00:d=1.00",
+                 "color=c=0xFF0000:s=1080x14", "ass=subs.ass[v]", "saturation=0.000"):
+        assert part in g, part
+
+
+def test_clean_texts_and_new_fields():
+    import pytest
+    from cliptool.pipeline import clean_changes
+
+    ok = clean_changes({"texts": [{"text": "Hi", "font": "Nope", "size": 999, "start": 1, "end": 3}],
+                        "speed": 5, "cam_share": 0.01, "cam_pos": "bottom", "zoom": None,
+                        "progress_bar": {"on": True, "color": "#00FF00", "position": "top"}, "quality": "high"}, 100)
+    t = ok["texts"][0]
+    assert t["font"] == "Arial Black" and t["size"] == 300 and ok["speed"] == 2 and ok["cam_share"] == 0.15
+    assert ok["zoom"] is None and ok["progress_bar"]["position"] == "top" and ok["quality"] == "high"
+    for bad in ({"texts": [{"text": "x", "start": 3, "end": 1}]}, {"cam_pos": "left"}, {"quality": "ultra"},
+                {"texts": [{"text": "x", "color": "pink"}]}, {"texts": "nope"}):
+        with pytest.raises(ValueError):
+            clean_changes(bad, 100)

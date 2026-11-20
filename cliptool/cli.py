@@ -22,8 +22,8 @@ FITS = ["auto", "crop", "blur", "black", "stack"]
 
 
 def _add_render_opts(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--aspect", choices=["vertical", "square", "original"], default="vertical",
-                   help="vertical 9:16 (default), square 1:1 or original 16:9")
+    p.add_argument("--aspect", choices=["vertical", "portrait", "square", "original"], default="vertical",
+                   help="vertical 9:16 (default), portrait 4:5, square 1:1 or original 16:9")
     p.add_argument("--fit", choices=FITS, default="auto",
                    help="vertical layout: auto (follow the action; default), crop (centre), blur / black "
                         "(full 16:9 frame on a blurred / black background) or stack (facecam on top, 1:1 game below)")

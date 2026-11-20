@@ -7,6 +7,11 @@ from pathlib import Path
 
 from .candidates import window_text
 
+# Per-clip edit settings kept in clips.json (see render.py for what each one does).
+EDIT_KEYS = ("caption_text", "style", "aspect", "fit", "facecam", "cam_share", "cam_pos", "game_x", "game_y",
+             "game_zoom", "crop_x", "crop_y", "zoom", "filters", "speed", "volume", "mute", "fade_in",
+             "fade_out", "texts", "progress_bar", "cover_t", "quality")
+
 
 def _fmt(t: float) -> str:
     m, s = divmod(int(t), 60)
@@ -33,15 +38,8 @@ def clip_records(info: dict, clips: list[dict], sentences: list[dict]) -> list[d
             "framing": c.get("framing"),
             "source_url": f"https://youtu.be/{vid}?t={int(c['start'])}",
             "transcript": c.get("caption_text") or window_text(sentences, c),
-            "caption_text": c.get("caption_text"),
-            "style": c.get("style"),
-            "aspect": c.get("aspect"),
-            "fit": c.get("fit"),
+            **{k: c.get(k) for k in EDIT_KEYS},
             "captions": c.get("captions", True),
-            "facecam": c.get("facecam"),
-            "game_x": c.get("game_x"),
-            "crop_x": c.get("crop_x"),
-            "filters": c.get("filters"),
             "edited": bool(c.get("edited")),
             "i": c["i"], "j": c["j"],
         })

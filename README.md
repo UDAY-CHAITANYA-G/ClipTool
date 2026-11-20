@@ -27,23 +27,22 @@ Opens http://127.0.0.1:8765 — paste a link, choose clip count / length / forma
 **Find clips**, watch progress, then play, download or copy titles. Previous runs are listed on the right.
 The site is only reachable from this computer.
 
-**Editing a clip:** press **Edit** on any clip to open the editor. It has a live 9:16 preview, where you can:
-- trim the start and end (±0.5 s, "Set here" at the playhead, or "Snap" to a sentence edge);
-- change the title and hook;
-- fix the caption text;
-- pick a text style: **Bold highlight**, **Word box**, **One word pop**, **Neon glow**, **Minimal** or
-  **Classic subtitle**;
-- set the caption position (top/middle/bottom), size, colours, words per line and UPPERCASE, or turn captions off;
-- switch the format (9:16, 1:1, 16:9) and pick a **template**:
-  - **Auto** follows the action;
-  - **Crop to fill**, with a draggable visible area;
-  - **Full 16:9 + blur** or **Full 16:9 + black** puts the whole frame inside 9:16;
-  - **Facecam top + 1:1 game**: the facecam is auto-detected, and you can drag or resize its box and slide the game area;
-- adjust **filters**: brightness, contrast, saturation, warmth, sharpen and vignette, or presets (Vivid,
-  Cinematic, Warm, Cool, Black & white, Vice sunset);
-- use the GTA-themed **Vice City** caption style (pink and orange, bold italic, purple outline).
+**Editing a clip:** press **Edit** on any clip. A full-screen workspace opens with a live preview, a timeline,
+and these tools on the left:
 
-**Save & re-render** rebuilds only that clip (about 30 s). The text style for new runs is set on the main form.
+| Tool | What you can do |
+| --- | --- |
+| **Layout** | Ratio **9:16 / 4:5 / 1:1 / 16:9**. Templates: **Auto** (follows the action), **Crop to fill** (zoom, drag the visible area), **Full + blur** / **Full + black** (whole 16:9 frame inside, with zoom), **Facecam + game**. |
+| **Facecam + game** | Split presets (Cam 1/4, 1/3, 44%, half, 60%) or a custom height. Put the cam on top or bottom. The facecam is auto-detected; drag or resize its box. Drag and zoom the game area. |
+| **Trim** | Drag the handles on the timeline, nudge ±0.5 s, "Set here", or snap to a sentence edge. Speed 0.5×–2× (captions and text stay in sync). |
+| **Text** | Add Title / Label / Call-to-action / Watermark boxes, as many as you like. Each has its own font, size, colour, bold/italic, outline, shadow, background box and animation (fade, pop). Drag it on the preview; set its timing or drag its bar on the timeline. |
+| **Captions** | 7 styles: Bold highlight, Word box, One word pop, Neon glow, Minimal, Classic subtitle, **Vice City (GTA)**. Position, size, colours, words per line, UPPERCASE, fix the caption text. |
+| **Filters** | Brightness, contrast, saturation, warmth, sharpen, vignette; presets Vivid, Cinematic, Warm, Cool, Black & white, Vice sunset. |
+| **Audio** | Volume 0–200%, mute, fade in/out (picture and sound). |
+| **Extras** | Hook text, progress bar (colour, top/bottom), cover image from the current frame, export quality. |
+
+Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes the selected text, Ctrl+S saves.
+**Save & render** rebuilds only that clip (about 30–60 s). The template and text style for new runs are set on the main form.
 
 **Deleting:** hover a previous run and press **×**, or open it and press **Delete this run** (removes its clips and
 its downloaded video). **Clear all** removes every run and every downloaded video. Both ask first and can't be undone.

@@ -225,7 +225,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/presets":
             return self._json({"presets": render.PRESETS, "positions": render.POSITIONS,
                                "filters": render.FILTER_PRESETS, "filter_limits": render.FILTER_LIMITS,
-                               "default_facecam": render.DEFAULT_FACECAM})
+                               "default_facecam": render.DEFAULT_FACECAM, "default_cam_share": render.DEFAULT_CAM_SHARE,
+                               "aspects": {k: {"label": v["label"], "size": v["size"], "cap_scale": v["cap_scale"],
+                                               "bottom": v["bottom"], "top": v["top"]} for k, v in render.ASPECTS.items()},
+                               "fonts": render.FONTS, "quality": list(render.QUALITY)})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/facecam", path)
         if m:
             run = _run_dir(m.group(1))
@@ -297,7 +300,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error("Use 1-20 clips and a length range between 5 and 180 seconds (min < max).")
             aspect = body.get("aspect", "vertical")
             fit = body.get("fit", "auto")
-            if aspect not in ("vertical", "square", "original") or fit not in render.FITS:
+            if aspect not in render.SIZES or fit not in render.FITS:
                 return self._error("bad aspect or framing")
             with JOBS_LOCK:
                 if _running_job():

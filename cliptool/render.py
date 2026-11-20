@@ -288,6 +288,32 @@ def words_between(sentences: list[dict], start: float, end: float) -> list[dict]
             if start - 0.05 <= w["s"] < end and w["w"] not in (">>", "&gt;&gt;")]
 
 
+def clip_caption_words(clip: dict, sentences: list[dict]) -> list[dict]:
+    """The words to caption for a clip, in source time.
+
+    - Edited caption text replaces only the stretch it was written for (`caption_range`), so a clip
+      that is later made longer gets the transcript's captions on the new part.
+    - `caption_offset` (seconds, +later / -earlier) shifts every caption to fix sync.
+    """
+    a, b = clip["start"], clip["end"]
+    words = words_between(sentences, a, b)
+    text = clip.get("caption_text")
+    if text:
+        rng = clip.get("caption_range")
+        if rng and len(rng) == 2:
+            ra, rb = float(rng[0]), float(rng[1])
+            inside = [w for w in words if ra - 0.05 <= w["s"] < rb]
+            words = sorted([w for w in words if not (ra - 0.05 <= w["s"] < rb)] + align_text(inside or
+                           words_between(sentences, ra, rb), text), key=lambda w: w["s"])
+            words = [w for w in words if a - 0.05 <= w["s"] < b]
+        else:
+            words = align_text(words, text)
+    off = _num(clip, "caption_offset", 0.0)
+    if abs(off) > 1e-3:
+        words = [{**w, "s": w["s"] + off, "e": w["e"] + off} for w in words]
+    return words
+
+
 def align_text(words: list[dict], text: str) -> list[dict]:
     """Put edited caption text onto the original word timings.
 
@@ -579,9 +605,7 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     texts = clip.get("texts") or []
     subs = bool(captions or texts)
     if subs:
-        words = words_between(sentences, clip["start"], clip["end"]) if captions else []
-        if captions and clip.get("caption_text"):
-            words = align_text(words, clip["caption_text"])
+        words = clip_caption_words(clip, sentences) if captions else []
         style = caption_style(cfg["captions"], clip.get("style"))
         if pieced:
             # Put every word on the output timeline (teaser words, then the clip's, through the speed zones).

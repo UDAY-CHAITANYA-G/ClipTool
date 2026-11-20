@@ -242,15 +242,26 @@
   }
 
   // ------------------------------------------------------------------ captions / text / extras overlays
-  function capWords(){
-    const ws = X.words.filter(w => w.s >= S.start - 0.05 && w.s < S.end);
-    const txt = (S.text || "").trim();
-    if (!S.textEdited || !txt || !ws.length) return ws;
+  function alignText(ws, txt){
     const toks = txt.split(/\s+/);
+    if (!ws.length) return [];
     if (toks.length === ws.length) return ws.map((w, i) => ({ ...w, w: toks[i] }));
     const t0 = ws[0].s, t1 = ws[ws.length - 1].e, wts = toks.map(t => t.length + 2), tot = wts.reduce((a, b) => a + b, 0);
     let acc = 0;
     return toks.map((t, i) => { const s = t0 + (t1 - t0) * acc / tot; acc += wts[i]; return { w: t, s, e: t0 + (t1 - t0) * acc / tot }; });
+  }
+  /* Mirrors clip_caption_words in render.py: edited text covers only its own range; offset shifts everything. */
+  function capWords(){
+    let ws = X.words.filter(w => w.s >= S.start - 0.05 && w.s < S.end);
+    const txt = (S.text || "").trim();
+    if (S.textEdited && txt) {
+      const [ra, rb] = S.textRange || [S.start, S.end];
+      const inside = X.words.filter(w => w.s >= ra - 0.05 && w.s < rb);
+      ws = [...ws.filter(w => !(w.s >= ra - 0.05 && w.s < rb)), ...alignText(inside, txt)]
+        .filter(w => w.s >= S.start - 0.05 && w.s < S.end).sort((a, b) => a.s - b.s);
+    }
+    const off = S.capOffset || 0;
+    return off ? ws.map(w => ({ ...w, s: w.s + off, e: w.e + off })) : ws;
   }
   // Caption fields the editor can change; presets supply the defaults (see _style_defaults in render.py).
   const STYLE_KEYS = ["font", "bold", "italic", "mode", "outline", "outline_color", "shadow", "shadow_color", "shadow_opacity",
@@ -583,7 +594,16 @@
         <div class="row"><div>${rng("Shadow", "style.shadow", 0, 12, 1, FMT.int)}</div>${color("Shadow colour", "style.shadow_color")}</div>
         ${rng("Shadow opacity", "style.shadow_opacity", 0, 1, 0.05, FMT.pct)}`}
         <div class="btnrow"><button type="button" data-act="resetstyle">Reset to ${esc(C.presets[st.preset].label)} defaults</button></div>
+        <h3>Sync captions</h3>
+        <div class="syncrow" role="group" aria-label="Caption timing">
+          <button type="button" data-act="capsync" data-v="-0.5">−0.5s</button><button type="button" data-act="capsync" data-v="-0.1">−0.1s</button>
+          <span class="syncv" title="Negative = earlier, positive = later">${(S.capOffset || 0) > 0 ? "+" : ""}${(S.capOffset || 0).toFixed(1)} s</span>
+          <button type="button" data-act="capsync" data-v="0.1">+0.1s</button><button type="button" data-act="capsync" data-v="0.5">+0.5s</button>
+          ${S.capOffset ? '<button type="button" data-act="capsync" data-v="0">Reset</button>' : ""}
+        </div>
+        <p class="note">If captions show before the words are spoken, press + (later); if they lag, press − (earlier). Play to check.</p>
         <h3>Caption text</h3><textarea rows="6" data-bind="text" aria-label="Caption text">${esc(S.text)}</textarea>
+        ${S.textEdited && S.textRange ? `<p class="note">Your edited text covers ${fmt(S.textRange[0])}–${fmt(S.textRange[1])}; outside that the transcript is used, so lengthening the clip adds captions automatically.</p>` : ""}
         <p class="note">Fix words or spelling. Timing follows the speech. <button type="button" data-act="resettext">Reset to transcript</button></p>`;
     },
     logo(){
@@ -792,12 +812,13 @@
       else if (S.style.position === "top" && C.presets[v]) S.style.position = effectiveFit() === "stack" ? "middle" : "bottom";
     }),
     cappos: v => mutate("cappos", () => { S.style.position = v; }),
+    capsync: v => mutate("capsync", () => { S.capOffset = +v === 0 ? 0 : +clamp((S.capOffset || 0) + +v, -5, 5).toFixed(2); }),
     capfx: v => mutate("capfx", () => { S.style.mode = v; }),
     noborder: () => mutate("capborder", () => { S.style.outline = 0; S.style.background = false; }),
     noshadow: () => mutate("capshadow", () => { S.style.shadow = 0; }),
     cleantext: () => mutate("capclean", () => { S.style.outline = 0; S.style.shadow = 0; S.style.background = false; }),
     resetstyle: () => mutate("capreset", () => { Object.assign(S.style, presetStyle(S.style.preset), { scale: 1 }); }),
-    resettext: () => mutate("captext", () => { S.textEdited = false; S.text = transcriptText(); }),
+    resettext: () => mutate("captext", () => { S.textEdited = false; S.textRange = null; S.text = transcriptText(); }),
     fpreset: v => mutate("fpreset", () => { const { label, ...vals } = C.filters[v]; S.filters = { ...NEUTRAL, ...vals }; }),
     pbpos: v => mutate("pb", () => { S.progress_bar.position = v; }),
     cover: () => mutate("cover", () => { S.cover_t = +clamp(tOut(), 0, outDur()).toFixed(2); }),
@@ -859,7 +880,7 @@
         const structural = inp.type === "checkbox" || inp.tagName === "SELECT";
         mutate(path, () => {
           o[k] = val;
-          if (path === "text") S.textEdited = true;
+          if (path === "text") { if (!S.textEdited) S.textRange = [S.start, S.end]; S.textEdited = true; }
           if (path === "speed") video().playbackRate = val;
           if (path === "cam_share" && S.facecam) S.facecam = shapeFacecam(S.facecam);
           if (path === "sel.start" || path === "sel.end") { const t = sel(); t.start = clamp(t.start, 0, outDur()); t.end = clamp(t.end, t.start + 0.1, outDur()); }
@@ -1107,6 +1128,7 @@
       game_x: n(clip.game_x, 0.5), game_y: n(clip.game_y, 0.5), game_zoom: n(clip.game_zoom, 1),
       speed: n(clip.speed, 1), filters: { ...NEUTRAL, ...(clip.filters || {}) },
       captions: clip.captions !== false, textEdited: !!clip.caption_text, text: clip.caption_text || "",
+      textRange: clip.caption_range || (clip.caption_text ? [clip.start, clip.end] : null), capOffset: clip.caption_offset || 0,
       style: { preset, ...presetStyle(preset), position: st.position || p.position || "bottom", scale: n(st.scale, 1),
                ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
       texts: (clip.texts || []).map(t => ({ ...t })),
@@ -1143,6 +1165,8 @@
       cam_share: S.cam_share, cam_pos: S.cam_pos, game_x: S.game_x, game_y: S.game_y, game_zoom: S.game_zoom,
       speed: S.speed, filters: S.filters, captions: S.captions,
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
+      caption_range: S.textEdited && typed && typed !== original ? (S.textRange || [S.start, S.end]) : null,
+      caption_offset: S.capOffset || 0,
       style: S.style, texts: S.texts, images: S.images,
       hook_intro: S.hookIntro && S.hookIntro.start != null ? S.hookIntro : { on: false },
       speed_zones: (S.zones || []).map(({ start, end, speed }) => ({ start, end, speed })),

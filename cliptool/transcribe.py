@@ -51,9 +51,19 @@ def words_from_json3(path: Path) -> list[dict]:
             toks = text.split()
             if not toks:
                 continue
-            step = (dur or 0.4 * len(toks)) / len(toks)
-            for j, tok in enumerate(toks):
-                words.append({"w": tok, "s": round(t0 + j * step, 3), "e": round(t0 + (j + 1) * step, 3)})
+            # A line without word timing lasts until the next line starts - YouTube's duration often overlaps
+            # the following line by ~2 s, which made words appear late. Spread words by their length.
+            nxt = next((events[k] for k in range(i + 1, len(events)) if not events[k].get("aAppend")), None)
+            span = dur or 0.4 * len(toks)
+            if nxt:
+                span = min(span, max(0.3, nxt["tStartMs"] / 1000 - t0))
+            span = min(span, 0.6 * len(toks) + 0.5)  # nobody speaks slower than this; the rest is silence
+            weights = [len(t) + 2 for t in toks]
+            total, acc = sum(weights), 0
+            for tok, wt in zip(toks, weights):
+                st = t0 + span * acc / total
+                acc += wt
+                words.append({"w": tok, "s": round(st, 3), "e": round(t0 + span * acc / total, 3)})
     words.sort(key=lambda x: x["s"])
     # Drop exact duplicates that rolling captions can produce.
     out: list[dict] = []
@@ -136,10 +146,24 @@ def words_to_sentences(words: list[dict], max_words: int = 28, max_secs: float =
     return sents
 
 
+TRANSCRIPT_VERSION = 2  # bump when caption parsing changes; cached caption transcripts are rebuilt
+
+
+def cached_transcript(work: Work) -> dict:
+    """The video's transcript, rebuilt from its cached captions if it was made by an older version."""
+    t = work.load("transcript.json")
+    if t.get("source") == "captions" and t.get("v") != TRANSCRIPT_VERSION and work.has("captions.json3"):
+        words, cues = split_cues(words_from_json3(work.path("captions.json3")))
+        if words:
+            t = {"source": "captions", "v": TRANSCRIPT_VERSION, "sentences": words_to_sentences(words), "cues": cues}
+            work.save("transcript.json", t)
+    return t
+
+
 def get_transcript(work: Work, captions: Path | None, video_fn, lang: str, whisper_model: str, force_whisper: bool = False) -> dict:
     """video_fn: callable returning the source video path (downloads lazily)."""
     if work.has("transcript.json"):
-        t = work.load("transcript.json")
+        t = cached_transcript(work)
         fresh = "cues" in t  # transcripts cached by older versions lack cues
         if fresh and (not force_whisper or t.get("source") == "whisper"):
             return t
@@ -152,6 +176,6 @@ def get_transcript(work: Work, captions: Path | None, video_fn, lang: str, whisp
     words, cues = split_cues(words)
     if not words:
         raise RuntimeError("Transcript is empty: the video seems to have no speech.")
-    t = {"source": source, "sentences": words_to_sentences(words), "cues": cues}
+    t = {"source": source, "v": TRANSCRIPT_VERSION, "sentences": words_to_sentences(words), "cues": cues}
     work.save("transcript.json", t)
     return t

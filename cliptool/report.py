@@ -10,7 +10,7 @@ from .candidates import window_text
 # Per-clip edit settings kept in clips.json (see render.py for what each one does).
 EDIT_KEYS = ("caption_text", "style", "aspect", "fit", "facecam", "cam_share", "cam_pos", "game_x", "game_y",
              "game_zoom", "crop_x", "crop_y", "zoom", "filters", "speed", "volume", "mute", "fade_in",
-             "fade_out", "texts", "images", "progress_bar", "cover_t", "quality", "hook_intro", "speed_zones",
+             "fade_out", "texts", "images", "progress_bar", "cover_t", "quality", "hook_intro", "speed_zones", "caption_range", "caption_offset",
              "description")
 
 
@@ -42,6 +42,7 @@ def clip_records(info: dict, clips: list[dict], sentences: list[dict]) -> list[d
             **{k: c.get(k) for k in EDIT_KEYS},
             "captions": c.get("captions", True),
             "edited": bool(c.get("edited")),
+            "manual": bool(c.get("manual")),
             "i": c["i"], "j": c["j"],
         })
     return recs

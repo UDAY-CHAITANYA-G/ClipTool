@@ -437,6 +437,46 @@ class Handler(BaseHTTPRequestHandler):
             generated = description.for_clip(info, {**clip, "description": None}, settings)
             return self._json({"text": description.for_clip(info, clip, settings), "generated": generated,
                                "custom": bool(clip.get("description"))})
+        m = re.fullmatch(r"/api/runs/([^/]+)/(overview|overview-wave)", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                data, info, sentences, source = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            if m.group(2) == "overview":
+                return self._json({
+                    "video": {k: info.get(k) for k in ("id", "title", "channel", "duration", "webpage_url")},
+                    "heatmap": info.get("heatmap") or [],
+                    "clips": [{"rank": c["rank"], "start": c["start"], "end": c["end"], "title": c["title"],
+                               "manual": bool(c.get("manual"))} for c in data["clips"]],
+                    "sentences": [{"start": round(x["start"], 2), "end": round(x["end"], 2), "text": x["text"]} for x in sentences],
+                    "source_url": f"/runsrc/{run.name}", "folder": run.name,
+                })
+            from .cache import Work
+            from .signals import waveform
+
+            wd = Path(data["settings"]["work_dir"])
+            work = Work(wd.parent, wd.name)
+            if work.has("overview_wave.json"):
+                return self._json(work.load("overview_wave.json"))
+            dur = float(info.get("duration") or 0)
+            if dur <= 0:
+                return self._error("unknown duration")
+            from .ffmpeg import read_audio_range
+            import numpy as np
+
+            samples = read_audio_range(source, 0, dur, 1000)  # 1 kHz is plenty for an overview
+            buckets = 2000
+            n = max(1, len(samples) // buckets)
+            rms = np.sqrt(np.mean(samples[: n * buckets].reshape(-1, n) ** 2, axis=1)) if len(samples) >= buckets else np.zeros(buckets)
+            db = 20 * np.log10(rms + 1e-5)
+            lo, hi = np.percentile(db, 5), db.max()
+            out = {"lo": 0.0, "hi": dur, "peaks": [round(float(v), 3) for v in np.clip((db - lo) / max(1e-6, hi - lo), 0, 1)]}
+            work.save("overview_wave.json", out)
+            return self._json(out)
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/(waveform|silences)", path)
         if m:
             run = _run_dir(m.group(1))
@@ -584,6 +624,30 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 _enqueue(job, work)
             return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                a, b = float(body["start"]), float(body["end"])
+                if not 3.0 <= b - a <= 180.0:
+                    raise ValueError("A clip must be 3-180 seconds long.")
+            except (ValueError, TypeError, KeyError) as e:
+                return self._error(str(e) or "Choose a start and an end.")
+            title = str(body.get("title") or "")
+            jid = uuid.uuid4().hex[:12]
+            job = {"id": jid, "kind": "add", "folder": run.name, "status": "queued", "stage": "Making your clip",
+                   "progress": 0.05, "log": [], "result": None, "error": None, "cancel": False}
+
+            def work(log, stage, cancelled):
+                return pipeline.add_clip(run, a, b, title, log=log, stage=stage)
+
+            with JOBS_LOCK:
+                _enqueue(job, work)
+            return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/edit", path)
         if m:
             run = _run_dir(m.group(1))
@@ -627,6 +691,15 @@ class Handler(BaseHTTPRequestHandler):
             if _busy():
                 return self._error("Videos are rendering; wait for them to finish or cancel them first.", HTTPStatus.CONFLICT)
             try:
+                m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)", path)
+                if m:
+                    run = _run_dir(m.group(1))
+                    if not run:
+                        return self._error("not found", HTTPStatus.NOT_FOUND)
+                    try:
+                        return self._json(pipeline.delete_clip(run, int(m.group(2))))
+                    except ValueError as e:
+                        return self._error(str(e), HTTPStatus.NOT_FOUND)
                 if path == "/api/library":
                     return self._json(_clear_all())
                 m = re.fullmatch(r"/api/library/([^/]+)", path)

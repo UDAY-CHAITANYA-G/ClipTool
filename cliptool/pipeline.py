@@ -167,7 +167,7 @@ def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
     if not source:
         raise FileNotFoundError("The downloaded video for this run is gone (cleared?). Run the link again to edit.")
     info = work.load("info.json")
-    sentences = work.load("transcript.json")["sentences"]
+    sentences = transcribe.cached_transcript(work)["sentences"]
     return data, info, sentences, source
 
 
@@ -231,6 +231,11 @@ def clean_changes(changes: dict, duration: float) -> dict:
     if "caption_text" in changes:
         val = str(changes["caption_text"] or "").strip()
         out["caption_text"] = val or None
+    if "caption_range" in changes:
+        r = changes["caption_range"]
+        out["caption_range"] = [round(float(r[0]), 2), round(float(r[1]), 2)] if r and len(r) == 2 and float(r[1]) > float(r[0]) else None
+    if "caption_offset" in changes:
+        out["caption_offset"] = round(min(5.0, max(-5.0, float(changes["caption_offset"] or 0))), 2)
     if "captions" in changes:
         out["captions"] = bool(changes["captions"])
     if "aspect" in changes:
@@ -422,3 +427,59 @@ def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None
         stage("Done", 1.0)
     log("Done.")
     return {"folder": run_dir.name, "rank": rank, "clip": next(r for r in recs if r["rank"] == rank)}
+
+
+# ---- clips you pick yourself in the full video ------------------------------------------
+
+def add_clip(run_dir: Path, start: float, end: float, title: str | None = None,
+             log: Callable[[str], None] = print, stage: Callable[[str, float], None] | None = None) -> dict:
+    """Add a clip you chose in the full-video view to a run, with the run's usual look, and render it."""
+    import json
+
+    from .assets import with_defaults
+
+    data, info, sentences, source = load_run(run_dir)
+    duration = info.get("duration") or 0
+    start, end = round(float(start), 2), round(float(end), 2)
+    if start < 0 or (duration and end > duration + 0.5):
+        raise ValueError("The clip must be inside the video.")
+    if not 3.0 <= end - start <= 180.0:
+        raise ValueError("A clip must be 3-180 seconds long.")
+    idx = [k for k, s in enumerate(sentences) if s["end"] > start and s["start"] < end] or [0]
+    probe = {"start": start, "end": end, "i": idx[0], "j": idx[-1]}
+    clips = data["clips"]
+    first = clips[0] if clips else {}
+    rank_no = max([c["rank"] for c in clips], default=0) + 1
+    clip = {
+        "rank": rank_no, "start": start, "end": end, "i": idx[0], "j": idx[-1],
+        "title": (title or "").strip()[:100] or rank.local_title(sentences, probe),
+        "hook": rank.local_hook(sentences, probe), "reason": "Picked by you in the full video.",
+        "score": 0.0, "signals": {}, "manual": True,
+        "style": dict(first.get("style") or {"preset": "highlight"}),
+        "aspect": first.get("aspect") or data["settings"].get("aspect", "vertical"),
+        "fit": first.get("fit") or data["settings"].get("fit", "auto"),
+        "captions": first.get("captions", True), "images": with_defaults(None),
+    }
+    clips.append(clip)
+    report.write_json(run_dir, info, report.clip_records(info, clips, sentences), data["settings"])
+    log(f"Added clip #{rank_no}: {clip['title']} ({start:.1f}-{end:.1f}s)")
+    return edit_clip(run_dir, rank_no, {}, log=log, stage=stage)
+
+
+def delete_clip(run_dir: Path, rank_no: int) -> dict:
+    """Remove one clip (its files and its entry) from a run."""
+    import json
+
+    data = json.loads((run_dir / "clips.json").read_text(encoding="utf-8"))
+    if not any(c["rank"] == rank_no for c in data["clips"]):
+        raise ValueError(f"Clip #{rank_no} not found.")
+    data["clips"] = [c for c in data["clips"] if c["rank"] != rank_no]
+    for f in (run_dir / "clips").glob(f"{rank_no:02d}_*"):
+        _remove_when_free(f)
+    (run_dir / "clips.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        _, info, _, _ = load_run(run_dir)
+        report.write_html(run_dir, info, data["clips"])
+    except FileNotFoundError:
+        pass
+    return {"deleted": rank_no, "left": len(data["clips"])}

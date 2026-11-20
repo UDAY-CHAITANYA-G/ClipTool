@@ -38,7 +38,7 @@ and these tools on the left:
 | **Speed zones** (timeline) | The timeline shows the audio **waveform**. Under it, a speed lane: drag to mark a part, then pick 0.25×–4× - orange zones speed up (skip boring bits), blue zones slow down (slow-mo for big moments). Drag zones to move, edges to resize. **Auto: speed up silent parts** finds dead air (no speech, quiet audio) and makes it 2×. The preview plays each zone at its speed; captions, text, logos and the hook follow the new timing. |
 | **Hook intro** (in Trim) | Start the clip with its most gripping 3-5 s, then play it from the beginning. **Find best hook** scores every word-aligned 3-5 s stretch inside the clip on replay heatmap, loudness / reactions, strong words and whether it opens and closes a thought; adjust start/end at the playhead and preview hook + clip. The main form's **Hook intro** box does this for every new clip (`--hook-intro` on the command line). |
 | **Text** | Add Title / Label / Call-to-action / Watermark boxes, as many as you like. Each has its own font, size, colour, bold/italic, outline, shadow, background box and animation (fade, pop). Drag it on the preview; set its timing or drag its bar on the timeline. |
-| **Captions** | Standard: Bold highlight, Word box, One word pop, Neon glow, Minimal, Classic subtitle. **GTA 6 themes**: Vice City, Wasted, Mission Passed, Leonida Neon, Heist Cash, Wanted, Phone Text, Ocean Drive. **Customize text**: font, size, bold, italic, UPPERCASE, letter spacing, colours, spoken-word effect (colour / box / pop / glow / none), border width + colour (0 = no border), shadow size + colour + opacity, background band; one-click "No border", "No shadow", "Clean text" and "Reset to defaults". Position, words per line, fix the caption text. |
+| **Captions** | Standard: Bold highlight, Word box, One word pop, Neon glow, Minimal, Classic subtitle. **GTA 6 themes**: Vice City, Wasted, Mission Passed, Leonida Neon, Heist Cash, Wanted, Phone Text, Ocean Drive. **Customize text**: font, size, bold, italic, UPPERCASE, letter spacing, colours, spoken-word effect (colour / box / pop / glow / none), border width + colour (0 = no border), shadow size + colour + opacity, background band; one-click "No border", "No shadow", "Clean text" and "Reset to defaults". Position, words per line, fix the caption text. **Sync captions** (−0.5 / −0.1 / +0.1 / +0.5 s) shifts every caption if they show early or late. Fixed caption text covers only the part it was written for, so making the clip longer adds transcript captions on the new part automatically. |
 | **Logo** | Up to 3 images per clip (watermarks, logos). Add your default watermark or any uploaded image, pick one of 9 locations or drag it on the preview, set size, opacity and when it shows (whole clip by default); "Make this the default watermark". |
 | **Filters** | Brightness, contrast, saturation, warmth, sharpen, vignette; presets Vivid, Cinematic, Warm, Cool, Black & white, Vice sunset. |
 | **Audio** | Volume 0–200%, mute, fade in/out (picture and sound). |
@@ -59,6 +59,18 @@ Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes t
   preview. Copy it per clip from the clip list, or edit it per clip in the editor (Extras).
 - **Storage folders** - shows where finished clips and downloaded videos are stored (with space used), lets you
   pick other folders with a folder browser, and opens them in Explorer. Existing files are not moved.
+
+**Full video – make your own clips:** open a run and press **▶ Full video – make clips**. You get the whole
+source video, an overview bar (audio waveform, replay heatmap, the clips already made - orange = picked by
+ClipTool, purple = picked by you) and the full searchable transcript. Set the start/end by dragging on the bar,
+pressing **I** / **O** at the playhead, or the **Start** / **End** buttons on a transcript line (snaps to sentence
+edges unless you untick it); **P** plays the selection. Name it (a title is suggested) and press **Create clip** (3 s–3 min) -
+it renders with the run's format, captions and default logos and appears in the clip list tagged **Picked by you**.
+Delete any single clip with the bin icon on its card.
+
+**Caption timing:** YouTube auto-captions without word timings are now spread over each line's real span (lines
+no longer run into the next one). Existing runs are re-read automatically; press **Save & render** (or re-run)
+on a clip made before this fix to get the corrected captions.
 
 **Grid / List:** the switch above the clips shows them as cards or as one row per clip (remembered).
 

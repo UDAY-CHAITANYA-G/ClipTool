@@ -329,3 +329,25 @@ def test_speed_zones_timeline_and_validation():
     assert ok["speed_zones"] == [{"start": 5.0, "end": 9.0, "speed": 2.0}, {"start": 9.0, "end": 12.0, "speed": 3.0}]
     with pytest.raises(ValueError):
         clean_changes({"speed_zones": [{"start": 1, "end": 5, "speed": 8}]}, 100)
+
+
+def test_caption_words_range_offset_and_json3_timing(tmp_path):
+    import json
+    from cliptool.render import clip_caption_words
+    from cliptool.transcribe import words_from_json3
+
+    words = [{"w": f"w{i}", "s": float(i), "e": i + 0.8} for i in range(20)]
+    sentences = [{"start": 0, "end": 20, "text": "x", "words": words}]
+    # edited text was written for 2-6 s; the clip was later lengthened to 0-10 s
+    clip = {"start": 0.0, "end": 10.0, "caption_text": "AA BB CC DD", "caption_range": [2.0, 6.0], "caption_offset": 0.5}
+    got = clip_caption_words(clip, sentences)
+    texts = [w["w"] for w in got]
+    assert texts == ["w0", "w1", "AA", "BB", "CC", "DD", "w6", "w7", "w8", "w9"]
+    assert got[0]["s"] == 0.5 and got[-1]["s"] == 9.5  # +0.5 s sync offset
+    # json3 line without word timing: words end where the next line starts, not at the overlapping duration
+    cap = {"events": [{"tStartMs": 1000, "dDurationMs": 8000, "segs": [{"utf8": "Okay, rolling."}]},
+                      {"tStartMs": 3000, "dDurationMs": 4000, "segs": [{"utf8": "next"}, {"utf8": " line", "tOffsetMs": 300}]}]}
+    f = tmp_path / "c.json3"
+    f.write_text(json.dumps(cap), encoding="utf-8")
+    ws = words_from_json3(f)
+    assert ws[1]["w"] == "rolling." and ws[1]["e"] <= 3.0

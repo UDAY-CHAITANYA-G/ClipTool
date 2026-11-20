@@ -114,7 +114,9 @@ def cmd_render(a: argparse.Namespace) -> int:
     if not source:
         print("error: source video is gone from the work cache; run `cliptool <url>` again.", file=sys.stderr)
         return 1
-    sentences = work.load("transcript.json")["sentences"]
+    from .transcribe import cached_transcript
+
+    sentences = cached_transcript(work)["sentences"]
     info = json.loads((work.dir / "info.json").read_text(encoding="utf-8"))
     cfg = load_config(a.config)
     old = a.folder / "clips"

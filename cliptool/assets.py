@@ -235,11 +235,16 @@ DEFAULT_PATHS = {"output": "output", "work": "work"}  # relative to the project 
 def load_settings() -> dict:
     s = {kind: {**layer, "auto": False} for kind, layer in DEFAULTS.items()}
     s["paths"] = {"output": None, "work": None}
+    from .description import DEFAULTS as DESC_DEFAULTS
+
+    s["description"] = dict(DESC_DEFAULTS)
     try:
         data = json.loads(SETTINGS.read_text(encoding="utf-8"))
         for kind in DEFAULTS:
             s[kind].update({k: v for k, v in data.get(kind, {}).items() if k in s[kind]})
         s["paths"].update({k: v for k, v in (data.get("paths") or {}).items() if k in s["paths"] and isinstance(v, str)})
+        s["description"].update({k: v for k, v in (data.get("description") or {}).items()
+                                 if k in s["description"] and isinstance(v, str)})
     except (OSError, ValueError):
         pass
     for kind in DEFAULTS:

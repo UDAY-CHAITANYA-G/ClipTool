@@ -292,3 +292,20 @@ def test_find_hook_picks_loud_strong_moment(monkeypatch):
     assert h and 3.0 <= h["end"] - h["start"] <= 5.5
     assert h["text"].startswith("Why") and "secret?" in h["text"]  # opens the thought, ends on the payoff
     assert h["start"] >= 3.0 - 0.1  # never from the clip's first seconds
+
+
+def test_description_template():
+    from cliptool import description
+
+    info = {"id": "abcdefghijk", "title": "Big Stream", "channel": "Streamer TV",
+            "webpage_url": "https://www.youtube.com/watch?v=abcdefghijk", "channel_url": None, "channel_handle": "@streamer"}
+    clip = {"title": "Wild moment", "start": 125.4, "end": 160.0}
+    text = description.for_clip(info, clip, {**description.DEFAULTS, "my_channel": "ClipStories", "contact": "me@example.com"})
+    assert text.startswith("Wild moment")
+    assert "Streamer TV" in text and "https://youtu.be/abcdefghijk?t=125" in text and "(2:05–2:40)" in text
+    assert "me@example.com" in text and "@streamer" in text and "#Shorts" in text
+    assert "{channel_url}" not in text and "Subscribe to" not in text  # line with an empty link is dropped
+    # an edited description wins over the template
+    assert description.for_clip(info, {**clip, "description": "Mine"}, description.DEFAULTS) == "Mine"
+    # missing contact: the copyright line is dropped rather than left half-empty
+    assert "contact me first at" not in description.for_clip(info, clip, description.DEFAULTS)

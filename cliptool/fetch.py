@@ -50,6 +50,8 @@ def fetch_info(url: str, work_root: Path, cookies_from_browser: str | None = Non
         "id": info.get("id"),
         "title": info.get("title"),
         "channel": info.get("channel") or info.get("uploader"),
+        "channel_url": info.get("channel_url") or info.get("uploader_url"),
+        "channel_handle": info.get("uploader_id") if str(info.get("uploader_id") or "").startswith("@") else None,
         "duration": info.get("duration"),
         "webpage_url": info.get("webpage_url") or url,
         "chapters": info.get("chapters") or [],

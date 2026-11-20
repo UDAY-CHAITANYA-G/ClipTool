@@ -52,6 +52,10 @@ Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes t
   new video gets them automatically, in place. **Remove background** turns a logo with a fake checkerboard, solid or
   black background into a clean transparent one (it also trims it and drops stray marks). Per clip, the editor's **Logo** tool moves, resizes or
   removes them (up to 3 images per clip).
+- **Description** - the upload description every clip gets: credit + links to the original channel and video, the exact
+  moment, the streamer's @handle, and a professional copyright note asking owners to contact you first. Set your
+  channel name, contact and hashtags, edit the template (placeholders like `{channel}`, `{timestamp_url}`), see a live
+  preview. Copy it per clip from the clip list, or edit it per clip in the editor (Extras).
 - **Storage folders** - shows where finished clips and downloaded videos are stored (with space used), lets you
   pick other folders with a folder browser, and opens them in Explorer. Existing files are not moved.
 

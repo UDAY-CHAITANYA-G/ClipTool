@@ -276,6 +276,11 @@ def clean_changes(changes: dict, duration: float) -> dict:
                                "position": "top" if pb.get("position") == "top" else "bottom"}
     if "texts" in changes:
         out["texts"] = clean_texts(changes["texts"])
+    if "description" in changes:
+        d = str(changes["description"] or "").strip()
+        if len(d) > 5000:
+            raise ValueError("Descriptions can be at most 5000 characters (YouTube's limit).")
+        out["description"] = d or None
     if "hook_intro" in changes:
         h = changes["hook_intro"] or {}
         if not h.get("on"):

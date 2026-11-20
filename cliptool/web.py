@@ -284,6 +284,43 @@ class Handler(BaseHTTPRequestHandler):
             _open_folder(target)
             self._json({"opened": str(target)})
             return True
+        if path == "/api/description" and method == "GET":
+            from .description import DEFAULT_TEMPLATE
+
+            self._json({**assets.load_settings()["description"], "default_template": DEFAULT_TEMPLATE})
+            return True
+        if path == "/api/description" and method == "POST":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                s = assets.load_settings()
+                for k, limit in (("template", 5000), ("my_channel", 100), ("contact", 200), ("hashtags", 500)):
+                    if k in body:
+                        s["description"][k] = str(body[k] or "")[:limit]
+                assets.save_settings(s)
+                self._json(s["description"])
+            except (ValueError, TypeError) as e:
+                self._error(str(e) or "invalid description settings")
+            return True
+        if path == "/api/description/preview" and method == "POST":
+            from . import description
+
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            settings = {**assets.load_settings()["description"], **{k: str(body.get(k) or "") for k in
+                                                                   ("template", "my_channel", "contact", "hashtags") if k in body}}
+            run = _run_dir(str(body.get("folder") or ""))
+            info, clip = {"title": "Original video title", "channel": "Original Channel", "id": "VIDEOID",
+                          "channel_handle": "@channel"}, {"title": "Your clip title", "start": 61, "end": 92}
+            if run:
+                try:
+                    data, info, _, _ = pipeline.load_run(run)
+                    clip = data["clips"][0]
+                except (FileNotFoundError, IndexError, KeyError):
+                    pass
+            self._json({"text": description.render(settings.get("template") or description.DEFAULT_TEMPLATE,
+                                                   description.context(info, {**clip, "description": None}, settings))})
+            return True
         if path == "/api/settings":
             if method == "GET":
                 self._json(assets.load_settings())
@@ -340,6 +377,27 @@ class Handler(BaseHTTPRequestHandler):
                                "aspects": {k: {"label": v["label"], "size": v["size"], "cap_scale": v["cap_scale"],
                                                "bottom": v["bottom"], "top": v["top"]} for k, v in render.ASPECTS.items()},
                                "fonts": render.FONTS, "quality": list(render.QUALITY), "effects": render.EFFECTS})
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/description", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from . import description
+            from .cache import Work
+
+            data = json.loads((run / "clips.json").read_text(encoding="utf-8"))
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            wd = Path(data["settings"]["work_dir"])
+            work = Work(wd.parent, wd.name)
+            info = work.load("info.json") if work.has("info.json") else dict(data["video"])
+            if work.has("info.json"):
+                info = description.ensure_channel_details(info, work)
+            settings = assets.load_settings()["description"]
+            generated = description.for_clip(info, {**clip, "description": None}, settings)
+            return self._json({"text": description.for_clip(info, clip, settings), "generated": generated,
+                               "custom": bool(clip.get("description"))})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/hook", path)
         if m:
             run = _run_dir(m.group(1))

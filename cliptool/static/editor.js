@@ -545,7 +545,14 @@
     },
     extras(){
       const pb = S.progress_bar;
-      return `<h3>Details</h3><label class="fld">Hook (opening line, shown in the clip list)<input maxlength="140" value="${esc(S.hook)}" data-bind="hook"></label>
+      if (X.desc === undefined) { X.desc = null; loadClipDescription(); }
+      const dtext = S.description ?? (X.desc ? X.desc.generated : "Loading…");
+      return `<h3>Upload description</h3>
+        <textarea rows="10" data-bind="description" aria-label="Upload description">${esc(dtext)}</textarea>
+        <p class="note">${S.description ? "Edited for this clip." : "From your template (Settings > Description)."} ${(dtext || "").length} / 5000
+          ${S.description ? '<button type="button" data-act="descreset">Reset to template</button>' : ""}
+          <button type="button" data-act="desccopy">Copy</button></p>
+        <h3>Details</h3><label class="fld">Hook (opening line, shown in the clip list)<input maxlength="140" value="${esc(S.hook)}" data-bind="hook"></label>
         <h3>Progress bar</h3>${check("Show progress bar", "progress_bar.on")}
         ${pb.on ? `<div class="row">${color("Colour", "progress_bar.color")}<div class="fld">Position${seg("pbpos", [["top", "Top"], ["bottom", "Bottom"]], pb.position)}</div></div>` : ""}
         <h3>Cover image</h3><p class="note">${S.cover_t == null ? "Picked automatically from the first seconds." : `Frame at ${S.cover_t.toFixed(1)} s of the clip.`}</p>
@@ -574,6 +581,13 @@
     const im = { id: "w" + Math.random().toString(36).slice(2, 8), file: p.file, x: p.x ?? spot[0], y: p.y ?? spot[1],
                  size: p.size ?? 0.18, opacity: p.opacity ?? 0.9, start: 0, end: null };
     mutate("addimg", () => { S.images.push(im); X.selImg = im.id; });
+  }
+  async function loadClipDescription(){
+    try {
+      const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/description`);
+      X.desc = await r.json();
+    } catch { X.desc = { generated: "" }; }
+    if (X.tool === "extras") renderPanel();
   }
   function newTextId(){ return "t" + Math.random().toString(36).slice(2, 8); }
   const ACTS = {
@@ -669,6 +683,8 @@
     cover: () => mutate("cover", () => { S.cover_t = +clamp(tOut(), 0, outDur()).toFixed(2); }),
     coverauto: () => mutate("cover", () => { S.cover_t = null; }),
     quality: v => mutate("quality", () => { S.quality = v; }),
+    descreset: () => mutate("desc", () => { S.description = null; }),
+    desccopy: () => navigator.clipboard.writeText(S.description ?? (X.desc ? X.desc.generated : "")).then(() => toast("Description copied")),
   };
 
   function transcriptText(){ return X.words.filter(w => w.s >= S.start - 0.05 && w.s < S.end).map(w => w.w).join(" "); }
@@ -924,6 +940,7 @@
       texts: (clip.texts || []).map(t => ({ ...t })),
       images: (clip.images || []).map(i => ({ ...i })),
       hook: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
+      description: clip.description || null,
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
@@ -954,7 +971,8 @@
       speed: S.speed, filters: S.filters, captions: S.captions,
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
       style: S.style, texts: S.texts, images: S.images,
-      hook_intro: S.hook && S.hook.start != null ? S.hook : { on: false }, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
+      hook_intro: S.hook && S.hook.start != null ? S.hook : { on: false },
+      description: S.description && X.desc && S.description.trim() === (X.desc.generated || "").trim() ? null : S.description, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };
     if (S.fit === "stack") body.facecam = S.facecam || C.default_facecam;

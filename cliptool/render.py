@@ -80,11 +80,39 @@ PRESETS: dict[str, dict] = {
                   "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 5, "outline": 2, "mode": "plain"},
     "subtitle":  {"label": "Classic subtitle", "font": "Arial", "size": 56, "color": "#FFFFFF",
                   "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 7, "outline": 0, "mode": "band"},
-    # GTA-themed: Vice City sunset - hot pink text, orange active word, deep purple outline, bold italic.
-    "vice":      {"label": "Vice City (GTA)", "font": "Impact", "size": 92, "color": "#FF4FA3",
+    # ---- GTA 6 themes (group "gta"): each a different caption format ----
+    # Vice City sunset: hot pink text, orange active word, deep purple outline, bold italic.
+    "vice":      {"label": "Vice City", "group": "gta", "font": "Impact", "size": 92, "color": "#FF4FA3",
                   "highlight": "#FFB23F", "uppercase": True, "words_per_line": 2, "outline": 6, "mode": "color",
                   "italic": True, "outline_color": "#2B0B45", "shadow_color": "#7A1FA2"},
+    # Wasted: one huge red word at a time, popping in, centred on screen.
+    "wasted":    {"label": "Wasted", "group": "gta", "font": "Impact", "size": 150, "color": "#E0242F",
+                  "highlight": "#E0242F", "uppercase": True, "words_per_line": 1, "outline": 8, "mode": "pop",
+                  "outline_color": "#000000", "spacing": 3, "position": "middle"},
+    # Mission Passed: gold, letter-spaced, hard black drop shadow, white active word.
+    "mission":   {"label": "Mission Passed", "group": "gta", "font": "Arial Black", "size": 80, "color": "#F5C542",
+                  "highlight": "#FFFFFF", "uppercase": True, "words_per_line": 3, "outline": 5, "mode": "color",
+                  "outline_color": "#1A1206", "shadow_color": "#000000", "spacing": 2},
+    # Leonida Neon: cyan text with a hot-pink neon glow on the active word.
+    "leonida":   {"label": "Leonida Neon", "group": "gta", "font": "Arial Black", "size": 80, "color": "#2EF2FF",
+                  "highlight": "#FF3EA5", "uppercase": True, "words_per_line": 3, "outline": 3, "mode": "glow"},
+    # Heist Cash: white words, the spoken word on a money-green box.
+    "heist":     {"label": "Heist Cash", "group": "gta", "font": "Impact", "size": 88, "color": "#FFFFFF",
+                  "highlight": "#1FB45A", "uppercase": True, "words_per_line": 3, "outline": 5, "mode": "box"},
+    # Wanted: italic white, gold active word, wide spacing, dark amber shadow.
+    "wanted":    {"label": "Wanted", "group": "gta", "font": "Bahnschrift", "size": 84, "color": "#FFFFFF",
+                  "highlight": "#FFC81E", "uppercase": True, "words_per_line": 2, "outline": 6, "mode": "color",
+                  "italic": True, "outline_color": "#000000", "shadow_color": "#5A3E00", "spacing": 4},
+    # Phone Text: in-game phone message - sentence case on a translucent indigo band, at the top.
+    "phone":     {"label": "Phone Text", "group": "gta", "font": "Segoe UI", "size": 58, "color": "#FFFFFF",
+                  "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 6, "outline": 0, "mode": "band",
+                  "band_color": "#1E1B4B", "position": "top"},
+    # Ocean Drive: peach serif italic, pink active word, orange sunset offset shadow.
+    "ocean":     {"label": "Ocean Drive", "group": "gta", "font": "Georgia", "size": 86, "color": "#FFD6A5",
+                  "highlight": "#FF5E8A", "uppercase": False, "words_per_line": 2, "outline": 4, "mode": "color",
+                  "italic": True, "outline_color": "#3B0A45", "shadow_color": "#FF8A00"},
 }
+PRESET_GROUPS = {"standard": "Standard", "gta": "GTA 6 themes"}
 POSITIONS = ("bottom", "middle", "top")
 
 
@@ -94,7 +122,7 @@ def caption_style(cfg_captions: dict, override: dict | None) -> dict:
     style.setdefault("preset", "highlight")
     style.update({k: v for k, v in (override or {}).items() if v is not None})
     preset = PRESETS.get(style["preset"], PRESETS["highlight"])
-    merged = {**preset, "position": "bottom", "scale": 1.0}
+    merged = {**preset, "position": preset.get("position", "bottom"), "scale": 1.0}
     # Only per-clip overrides beat the preset; config.toml values apply to the default preset only.
     if style["preset"] == "highlight" and not override:
         merged.update({k: cfg_captions[k] for k in ("font", "size", "color", "highlight", "words_per_line", "outline")
@@ -130,15 +158,17 @@ def _caption_style_line(cap: dict, aspect: str) -> str:
     mode = cap.get("mode", "color")
     outline = int(cap.get("outline", 4))
     border_style, back, shadow = 1, "&H80000000", 2
-    if mode == "band":
-        border_style, back, outline, shadow = 3, "&H60000000", 14, 0  # translucent box behind each line
+    if mode == "band":  # translucent box behind each line
+        border_style, outline, shadow = 3, 14, 0
+        back = _ass_color(cap.get("band_color", "#000000"), alpha=0x40 if cap.get("band_color") else 0x60)
     if mode == "glow":
         shadow = 0
     out_col = _ass_color(cap["highlight"]) if mode == "glow" else _ass_color(cap.get("outline_color", "#000000"))
     if cap.get("shadow_color"):
         back, shadow = _ass_color(cap["shadow_color"]), 6  # solid offset shadow (Vice City look)
     italic = -1 if cap.get("italic") else 0
-    return (f"Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,{italic},0,0,100,100,0,0,"
+    spacing = int(cap.get("spacing", 0))
+    return (f"Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,{italic},0,0,100,100,{spacing},0,"
             f"{border_style},{outline},{shadow},{align},70,70,{margin_v},1")
 
 

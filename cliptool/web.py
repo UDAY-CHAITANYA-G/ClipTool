@@ -223,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
             running = _running_job()
             return self._json({"running": running["id"] if running else None})
         if path == "/api/presets":
-            return self._json({"presets": render.PRESETS, "positions": render.POSITIONS,
+            return self._json({"presets": render.PRESETS, "preset_groups": render.PRESET_GROUPS, "positions": render.POSITIONS,
                                "filters": render.FILTER_PRESETS, "filter_limits": render.FILTER_LIMITS,
                                "default_facecam": render.DEFAULT_FACECAM, "default_cam_share": render.DEFAULT_CAM_SHARE,
                                "aspects": {k: {"label": v["label"], "size": v["size"], "cap_scale": v["cap_scale"],

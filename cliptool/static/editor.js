@@ -214,7 +214,8 @@
   function drawCap(node, toks, active, st, fontPx){
     const p = C.presets[st.preset] || {}, mode = p.mode || "color";
     const stroke = Math.max(1, fontPx * (p.outline || 4) / 78), strokeCol = p.outline_color || "#000";
-    node.style.cssText = `font-family:"${p.font}","Arial Black",Impact,sans-serif;font-size:${fontPx}px;font-weight:${mode === "plain" ? 600 : mode === "band" ? 500 : 800};color:${st.color};` + (p.italic ? "font-style:italic;" : "");
+    node.style.cssText = `font-family:"${p.font}","Arial Black",Impact,sans-serif;font-size:${fontPx}px;font-weight:${mode === "plain" ? 600 : mode === "band" ? 500 : 800};color:${st.color};` +
+      (p.italic ? "font-style:italic;" : "") + (p.spacing ? `letter-spacing:${p.spacing / (p.size || 78) * fontPx * 0.9}px;` : "");
     const shadow = p.shadow_color ? `${stroke * 1.2}px ${stroke * 1.2}px 0 ${p.shadow_color}` : `0 ${stroke}px ${stroke * 1.5}px rgba(0,0,0,.5)`;
     const word = (t, on) => {
       let css = "";
@@ -228,7 +229,7 @@
     if (mode === "pop") { node.innerHTML = active >= 0 ? word(toks[active], true) : ""; return; }
     if (mode === "band") {
       const s = toks.join(" ");
-      node.innerHTML = `<span style="background:rgba(0,0,0,.62);padding:.08em .35em;border-radius:.12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;line-height:1.5">${esc(st.uppercase ? s.toUpperCase() : s)}</span>`;
+      node.innerHTML = `<span style="background:${p.band_color ? hexA(p.band_color, 0.75) : "rgba(0,0,0,.62)"};padding:.08em .35em;border-radius:.12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;line-height:1.5">${esc(st.uppercase ? s.toUpperCase() : s)}</span>`;
       return;
     }
     node.innerHTML = toks.map((t, i) => word(t, mode !== "plain" && i === active)).join(" ");
@@ -421,9 +422,10 @@
     captions(){
       const st = S.style;
       return `${check("Show captions", "captions")}
-        <h3>Caption style</h3><div class="presets" role="radiogroup">${Object.entries(C.presets).map(([k, p]) =>
-          `<button type="button" class="preset" role="radio" aria-checked="${k === st.preset}" data-act="preset" data-v="${k}">
-            <span class="pv"><span class="cap" data-tile="${k}"></span></span><span class="nm">${esc(p.label)}</span></button>`).join("")}</div>
+        ${Object.entries(C.preset_groups).map(([g, gl]) => `<h3>${esc(gl)}</h3><div class="presets" role="radiogroup" aria-label="${esc(gl)}">${
+          Object.entries(C.presets).filter(([, p]) => (p.group || "standard") === g).map(([k, p]) =>
+          `<button type="button" class="preset${g === "gta" ? " gta" : ""}" role="radio" aria-checked="${k === st.preset}" data-act="preset" data-v="${k}">
+            <span class="pv"><span class="cap" data-tile="${k}"></span></span><span class="nm">${esc(p.label)}</span></button>`).join("")}</div>`).join("")}
         <div class="fld">Position${seg("cappos", [["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]], st.position)}</div>
         ${rng("Size", "style.scale", 0.5, 1.8, 0.05, FMT.pct)}${rng("Words per line", "style.words_per_line", 1, 8, 1, FMT.int)}
         <div class="row">${color("Text colour", "style.color")}${color("Highlight colour", "style.highlight")}</div>
@@ -508,7 +510,12 @@
     tfrom: () => mutate("ttime", () => { const t = sel(); t.start = +clamp(tOut(), 0, t.end - 0.1).toFixed(1); }),
     tto: () => mutate("ttime", () => { const t = sel(); t.end = +clamp(tOut(), t.start + 0.1, outDur()).toFixed(1); }),
     twhole: () => mutate("ttime", () => { const t = sel(); t.start = 0; t.end = +outDur().toFixed(1); }),
-    preset: v => mutate("preset", () => { const p = C.presets[v]; Object.assign(S.style, { preset: v, color: p.color, highlight: p.highlight, uppercase: p.uppercase, words_per_line: p.words_per_line }); }),
+    preset: v => mutate("preset", () => {
+      const p = C.presets[v];
+      Object.assign(S.style, { preset: v, color: p.color, highlight: p.highlight, uppercase: p.uppercase, words_per_line: p.words_per_line, scale: 1 });
+      if (p.position) S.style.position = p.position;
+      else if (S.style.position === "top" && C.presets[v]) S.style.position = effectiveFit() === "stack" ? "middle" : "bottom";
+    }),
     cappos: v => mutate("cappos", () => { S.style.position = v; }),
     resettext: () => mutate("captext", () => { S.textEdited = false; S.text = transcriptText(); }),
     fpreset: v => mutate("fpreset", () => { const { label, ...vals } = C.filters[v]; S.filters = { ...NEUTRAL, ...vals }; }),

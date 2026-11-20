@@ -167,3 +167,18 @@ def test_clean_texts_and_new_fields():
                 {"texts": [{"text": "x", "color": "pink"}]}, {"texts": "nope"}):
         with pytest.raises(ValueError):
             clean_changes(bad, 100)
+
+
+def test_gta_theme_presets():
+    from cliptool.render import PRESETS, build_ass, caption_style
+
+    gta = [k for k, p in PRESETS.items() if p.get("group") == "gta"]
+    assert len(gta) >= 5 and len({PRESETS[k]["mode"] for k in gta}) >= 4  # several different formats
+    words = [{"w": "wasted", "s": 0.0, "e": 0.6}, {"w": "again", "s": 0.6, "e": 1.2}]
+    for k in gta:
+        ass = build_ass(words, 0, 2, (1080, 1920), caption_style({}, {"preset": k}), "vertical")
+        assert "Dialogue:" in ass, k
+    wasted = build_ass(words, 0, 2, (1080, 1920), caption_style({}, {"preset": "wasted"}), "vertical")
+    assert ",5,70,70,0," in wasted and ",100,100,3,0," in wasted  # centred, letter-spaced
+    phone = build_ass(words, 0, 2, (1080, 1920), caption_style({}, {"preset": "phone"}), "vertical")
+    assert ",&H404B1B1E," in phone and ",8,70,70,300," in phone  # indigo band, top

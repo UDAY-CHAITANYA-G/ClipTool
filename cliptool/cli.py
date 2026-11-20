@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--ai", action="store_true",
                    help="optional: also ask Claude to rank and title clips (needs an Anthropic API key)")
     r.add_argument("--model", help="Claude model when --ai is used (default claude-opus-5-5)")
-    r.add_argument("--style", default="highlight", help="caption style: highlight, box, single, neon, minimal, subtitle, vice")
+    r.add_argument("--style", default="highlight", help="caption style: highlight, box, single, neon, minimal, subtitle; GTA 6 themes: vice, wasted, mission, leonida, heist, wanted, phone, ocean")
     r.add_argument("--lang", default="en", help="caption/transcription language (default en)")
     r.add_argument("--whisper", action="store_true", help="force local transcription with faster-whisper")
     r.add_argument("--whisper-model", default="small", help="faster-whisper model size (default small)")

@@ -137,6 +137,47 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 
 /* ---- editor button (workspace styles live in editor.css) ---- */
 .actions .edit{border-color:var(--accent);color:var(--accent);font-weight:600}
+/* ---- header gear + settings dialog ---- */
+header{position:relative}
+.gear{margin-left:auto;display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:10px;font-weight:600;position:relative}
+.gear svg{width:18px;height:18px}
+.gear:hover{border-color:var(--accent);color:var(--accent)}
+.gear-dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--good)}
+.logo-status{margin:10px 0 0;font-size:12.5px;color:var(--quiet)}
+.logo-status button{font-size:12px;padding:2px 8px;margin-left:4px}
+dialog#settings{padding:0;border:none;border-radius:16px;background:var(--panel);color:var(--ink);width:min(980px,calc(100vw - 24px));
+  max-height:calc(100vh - 24px);box-shadow:0 20px 60px rgba(0,0,0,.4)}
+dialog#settings::backdrop{background:rgba(0,0,0,.55)}
+.set{display:flex;flex-direction:column;max-height:calc(100vh - 24px)}
+.set-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px 6px}
+.set-head h2{margin:0;font-size:17px}
+.ghostx{border:none;font-size:18px;padding:4px 8px;color:var(--quiet)}
+.set-tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line)}
+.set-tabs button{border:none;border-radius:0;padding:10px 12px;font-weight:600;color:var(--quiet);border-bottom:2px solid transparent}
+.set-tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.set-body{padding:14px 18px 20px;overflow:auto}
+.set-note{font-size:13px;color:var(--quiet);margin:0 0 6px}
+.set-note code{font-size:12px;word-break:break-all}
+.linkbtn{border:none;padding:0 4px;color:var(--accent);text-decoration:underline;font-size:12.5px}
+#wmrows .wmrow:first-child{margin-top:4px}
+.pathcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:10px}
+.pathcard h3{margin:0 0 2px;font-size:14px}
+.pathcard p{margin:0 0 8px;font-size:12.5px;color:var(--quiet)}
+.pathrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pathrow code{flex:1;min-width:240px;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;word-break:break-all}
+.pathrow button{font-size:12.5px;padding:6px 10px}
+.pathmeta{font-size:12px;color:var(--quiet);margin-top:6px}
+.badge{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--quiet);margin-left:6px;font-weight:500}
+.browser{border:1px solid var(--accent);border-radius:12px;margin-top:14px;overflow:hidden}
+.br-head{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.br-path{display:flex;gap:6px}
+.br-path input{flex:1;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.br-path button{padding:5px 10px}
+.br-list{max-height:260px;overflow:auto;padding:6px}
+.br-list button{display:flex;gap:8px;align-items:center;width:100%;text-align:left;border:none;border-radius:8px;padding:6px 8px;font-size:13px}
+.br-list button:hover,.br-list button:focus{background:var(--soft)}
+.br-foot{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:10px 12px;border-top:1px solid var(--line)}
+.br-msg{margin-right:auto;font-size:12.5px;color:var(--bad)}
 </style>
 <link rel="stylesheet" href="/static/editor.css">
 </head>
@@ -145,6 +186,10 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
   <header>
     <div class="logo">✂</div>
     <div><h1>ClipTool</h1><p>Paste a YouTube link. Get the best moments as ready-to-post shorts. Runs fully on this computer.</p></div>
+    <button type="button" class="gear" id="open-settings" aria-haspopup="dialog" title="Settings: logos and storage folders">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+      <span>Settings</span><span class="gear-dot" id="gear-dot" hidden title="Logos are on"></span>
+    </button>
   </header>
 
   <section class="panel">
@@ -181,18 +226,7 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
           </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
       </div>
-      <div class="wmrow" id="wmrow">
-        <span class="wmlabel">Watermark</span>
-        <span class="wmthumb" id="wm-thumb" title="Default watermark">None</span>
-        <label class="filebtn" title="PNG, JPG or WebP, up to 10 MB. Transparent PNG works best.">Upload image
-          <input type="file" id="wm-file" accept="image/png,image/jpeg,image/webp" hidden></label>
-        <label>Image<select id="wm-pick" aria-label="Watermark image"></select></label>
-        <label>Location<select id="wm-pos" aria-label="Watermark location"></select></label>
-        <label>Size <span id="wm-size-v"></span><input id="wm-size" type="range" min="0.05" max="0.6" step="0.01"></label>
-        <label>Opacity <span id="wm-op-v"></span><input id="wm-op" type="range" min="0.1" max="1" step="0.05"></label>
-        <label class="check"><input id="wm-auto" type="checkbox"> Add to new clips</label>
-        <button type="button" id="wm-del" class="danger" title="Delete the selected image from the library">Delete image</button>
-      </div>
+      <p class="logo-status" id="logo-status"></p>
       <div class="msg" id="msg"></div>
     </form>
 
@@ -226,6 +260,36 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
     </aside>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="settings" aria-labelledby="set-title">
+    <div class="set">
+      <div class="set-head"><h2 id="set-title">Settings</h2><button type="button" class="ghostx" id="close-settings" aria-label="Close settings">✕</button></div>
+      <div class="set-tabs" role="tablist">
+        <button type="button" role="tab" data-stab="logos" aria-selected="true">Logos</button>
+        <button type="button" role="tab" data-stab="storage" aria-selected="false">Storage folders</button>
+      </div>
+      <section class="set-body" data-spanel="logos" role="tabpanel">
+        <p class="set-note">Images turned on here are added to <b>every new video</b> automatically, at their location. You can still move,
+          resize or remove them per clip in the editor's <b>Logo</b> tool. Logos with a fake checkerboard or solid background can be cleaned with
+          <b>Remove background</b>. Videos you already made are not changed.</p>
+        <div id="wmrows"></div>
+        <p class="set-note">Images are stored in <code id="wm-path"></code> <button type="button" class="linkbtn" data-open="watermarks">Open folder</button></p>
+      </section>
+      <section class="set-body" data-spanel="storage" role="tabpanel" hidden>
+        <p class="set-note">Where ClipTool keeps its files. Changing a folder doesn't move what's already there: runs in the old
+          folder stop showing in the list until you switch back (or move them yourself).</p>
+        <div id="pathcards"></div>
+        <div class="browser" id="browser" hidden>
+          <div class="br-head"><b id="br-title">Choose a folder</b>
+            <div class="br-path"><button type="button" id="br-up" title="Up one level" aria-label="Up one level">↑</button>
+              <input id="br-input" aria-label="Folder path" spellcheck="false"><button type="button" id="br-go">Go</button></div></div>
+          <div class="br-list" id="br-list" role="listbox" aria-label="Folders"></div>
+          <div class="br-foot"><span class="br-msg" id="br-msg"></span>
+            <button type="button" id="br-cancel">Cancel</button><button type="button" class="primary" id="br-use">Use this folder</button></div>
+        </div>
+      </section>
+    </div>
+  </dialog>
   <footer>Only clip videos you own or have permission to use. Files are saved in the <code>output</code> folder.</footer>
 </div>
 
@@ -352,6 +416,7 @@ async function openRun(folder){
   $("grid").innerHTML = d.clips.map(c => card(c, folder, d.settings.aspect)).join("");
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
+  if (WM.all) renderWmRows();
 }
 
 $("grid").addEventListener("click", e => {
@@ -422,25 +487,36 @@ $("clearall").addEventListener("click", async () => {
   await loadLibrary(); showEmpty();
 });
 
-/* ===================== Watermark images (shared with the editor) ===================== */
-const WM = { images: [], positions: {}, settings: null, max: 3 };
+/* ===================== Logo images (shared with the editor) ===================== */
+const WM = { images: [], positions: {}, settings: null, all: null, max: 3 };
+const LOGO_KINDS = [["watermark", "Channel logo"], ["title", "Title logo"]];
 const POS_LABEL = { "top-left": "Top left", top: "Top", "top-right": "Top right", left: "Left", center: "Centre",
-                    right: "Right", "bottom-left": "Bottom left", bottom: "Bottom", "bottom-right": "Bottom right" };
+                    right: "Right", "bottom-left": "Bottom left", bottom: "Bottom", "bottom-right": "Bottom right",
+                    "below-captions": "Below captions", "top-title": "Top (title)" };
 
 async function loadWatermarks(){
   const [a, b] = await Promise.all([fetch("/api/watermarks").then(r => r.json()), fetch("/api/settings").then(r => r.json())]);
-  WM.images = a.images; WM.positions = a.positions; WM.max = a.max_per_clip; WM.settings = b.watermark;
-  renderWmRow();
+  WM.images = a.images; WM.positions = a.positions; WM.max = a.max_per_clip; WM.all = b; WM.settings = b.watermark;
+  renderWmRows();
   return WM;
 }
 
-/* Upload a File; returns the stored image info (or throws with a readable message). */
-async function uploadWatermark(file){
+/* Upload a File; returns the stored image info (or throws with a readable message).
+   If the picture has no real transparency, offer to remove its background (fake checkerboard,
+   solid colour, black...) and return the cleaned copy instead. */
+async function uploadWatermark(file, { askClean = true } = {}){
   if (!file) throw new Error("No file chosen.");
   if (file.size > 10 * 1024 * 1024) throw new Error("Images must be 10 MB or smaller.");
   const r = await fetch("/api/watermarks", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
-  const d = await r.json();
+  let d = await r.json();
   if (!r.ok) throw new Error(d.error || "Upload failed.");
+  if (askClean && d.opaque && confirm("This image has no transparent background (the checkerboard or colour behind the logo is part of the picture).\n\nRemove the background and keep only the logo?")) {
+    toast("Removing background…");
+    const c = await fetch(`/api/watermarks/${encodeURIComponent(d.name)}/clean`, { method: "POST" });
+    const cd = await c.json();
+    if (c.ok) { await fetch("/api/watermarks/" + encodeURIComponent(d.name), { method: "DELETE" }); d = cd; }
+    else toast(cd.error || "Couldn't remove the background - using the image as it is.");
+  }
   await loadWatermarks();
   return d;
 }
@@ -450,48 +526,162 @@ function posKey(x, y){
   return Object.entries(WM.positions).find(([, [px, py]]) => Math.abs(px - x) < 0.01 && Math.abs(py - y) < 0.01)?.[0] || "custom";
 }
 
-function renderWmRow(){
-  const s = WM.settings;
-  $("wm-pick").innerHTML = `<option value="">None</option>` + WM.images.map((im, i) =>
-    `<option value="${esc(im.name)}" ${im.name === s.file ? "selected" : ""}>Image ${WM.images.length - i} (${im.w}×${im.h})</option>`).join("");
-  const pk = posKey(s.x, s.y);
-  $("wm-pos").innerHTML = Object.keys(WM.positions).map(k => `<option value="${k}" ${k === pk ? "selected" : ""}>${POS_LABEL[k]}</option>`).join("") +
-    (pk === "custom" ? `<option value="custom" selected>Custom (set in editor)</option>` : "");
-  $("wm-size").value = s.size; $("wm-size-v").textContent = Math.round(s.size * 100) + "%";
-  $("wm-op").value = s.opacity; $("wm-op-v").textContent = Math.round(s.opacity * 100) + "%";
-  $("wm-auto").checked = !!s.auto; $("wm-auto").disabled = !s.file;
-  $("wm-thumb").innerHTML = s.file ? `<img alt="Default watermark" src="/wm/${encodeURIComponent(s.file)}">` : "None";
-  $("wm-del").hidden = !s.file;
-  ["wm-pos", "wm-size", "wm-op"].forEach(id => $(id).disabled = !s.file);
+function renderWmRows(){
+  $("wmrows").innerHTML = LOGO_KINDS.map(([kind, label]) => {
+    const s = WM.all[kind], pk = posKey(s.x, s.y), off = !s.file;
+    return `<div class="wmrow" data-kind="${kind}">
+      <span class="wmlabel">${label}</span>
+      <span class="wmthumb">${s.file ? `<img alt="${label}" src="/wm/${encodeURIComponent(s.file)}">` : "None"}</span>
+      <label class="filebtn" title="PNG, JPG or WebP, up to 10 MB">Upload<input type="file" data-wm="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+      <label>Image<select data-wm="pick" aria-label="${label} image"><option value="">None</option>${WM.images.map((im, i) =>
+        `<option value="${esc(im.name)}" ${im.name === s.file ? "selected" : ""}>Image ${WM.images.length - i} (${im.w}×${im.h})</option>`).join("")}</select></label>
+      <label>Location<select data-wm="pos" ${off ? "disabled" : ""}>${Object.keys(WM.positions).map(k =>
+        `<option value="${k}" ${k === pk ? "selected" : ""}>${POS_LABEL[k] || k}</option>`).join("")}${pk === "custom" ? '<option value="custom" selected>Custom (set in editor)</option>' : ""}</select></label>
+      <label>Size <span data-wm-v="size">${Math.round(s.size * 100)}%</span><input type="range" data-wm="size" min="0.05" max="0.8" step="0.01" value="${s.size}" ${off ? "disabled" : ""}></label>
+      <label>Opacity <span data-wm-v="opacity">${Math.round(s.opacity * 100)}%</span><input type="range" data-wm="opacity" min="0.1" max="1" step="0.05" value="${s.opacity}" ${off ? "disabled" : ""}></label>
+      <label class="check"><input type="checkbox" data-wm="auto" ${s.auto ? "checked" : ""} ${off ? "disabled" : ""}> Add to new clips</label>
+      ${s.file ? `<button type="button" data-wm="clean" title="Make the background transparent and trim to the logo">Remove background</button>` : ""}
+    </div>`;
+  }).join("");
 }
 
-async function saveWm(patch){
-  Object.assign(WM.settings, patch);
-  const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ watermark: WM.settings }) });
+async function saveLogo(kind, patch){
+  const next = { ...WM.all[kind], ...patch };
+  const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [kind]: next }) });
   const d = await r.json();
-  if (!r.ok) { toast(d.error || "Couldn't save the watermark settings."); return; }
-  WM.settings = d.watermark; renderWmRow();
+  if (!r.ok) { toast(d.error || "Couldn't save the logo settings."); return; }
+  WM.all = d; WM.settings = d.watermark; renderWmRows();
 }
 
-$("wm-file").addEventListener("change", async e => {
-  const f = e.target.files[0]; e.target.value = "";
-  try { const im = await uploadWatermark(f); await saveWm({ file: im.name, auto: true }); toast("Watermark uploaded - it will be added to new clips"); }
-  catch (err) { toast(err.message); }
+$("wmrows").addEventListener("change", async e => {
+  const row = e.target.closest("[data-kind]"); if (!row) return;
+  const kind = row.dataset.kind, what = e.target.dataset.wm;
+  if (what === "file") {
+    const f = e.target.files[0]; e.target.value = "";
+    try {
+      const im = await uploadWatermark(f);
+      const start = WM.all[kind].file ? {} : { ...WM.positions[kind === "title" ? "top-title" : "below-captions"].reduce((o, v, i) => (o[i ? "y" : "x"] = v, o), {}) };
+      await saveLogo(kind, { file: im.name, auto: true, ...start });
+      toast(`${kind === "title" ? "Title" : "Channel"} logo set - new clips get it automatically`);
+    } catch (err) { toast(err.message); }
+  }
+  if (what === "pick") saveLogo(kind, { file: e.target.value || null, auto: !!e.target.value && WM.all[kind].auto });
+  if (what === "pos") { const p = WM.positions[e.target.value]; if (p) saveLogo(kind, { x: p[0], y: p[1] }); }
+  if (what === "size" || what === "opacity") saveLogo(kind, { [what]: +e.target.value });
+  if (what === "auto") saveLogo(kind, { auto: e.target.checked });
 });
-$("wm-pick").addEventListener("change", e => saveWm({ file: e.target.value || null, auto: !!e.target.value && WM.settings.auto }));
-$("wm-pos").addEventListener("change", e => { const p = WM.positions[e.target.value]; if (p) saveWm({ x: p[0], y: p[1] }); });
-$("wm-size").addEventListener("input", e => { $("wm-size-v").textContent = Math.round(e.target.value * 100) + "%"; });
-$("wm-size").addEventListener("change", e => saveWm({ size: +e.target.value }));
-$("wm-op").addEventListener("input", e => { $("wm-op-v").textContent = Math.round(e.target.value * 100) + "%"; });
-$("wm-op").addEventListener("change", e => saveWm({ opacity: +e.target.value }));
-$("wm-auto").addEventListener("change", e => saveWm({ auto: e.target.checked }));
-$("wm-del").addEventListener("click", async () => {
-  const name = WM.settings.file; if (!name) return;
-  if (!confirm("Delete this watermark image from your library?\n\nClips already rendered keep it; clips you edit later lose it.")) return;
-  const r = await fetch("/api/watermarks/" + encodeURIComponent(name), { method: "DELETE" });
-  if (!r.ok) { toast("Couldn't delete the image."); return; }
-  await loadWatermarks(); toast("Image deleted");
+$("wmrows").addEventListener("input", e => {
+  const what = e.target.dataset.wm;
+  if (what === "size" || what === "opacity") e.target.closest("label").querySelector("[data-wm-v]").textContent = Math.round(e.target.value * 100) + "%";
 });
+$("wmrows").addEventListener("click", async e => {
+  const b = e.target.closest('[data-wm="clean"]'); if (!b) return;
+  const kind = b.closest("[data-kind]").dataset.kind, name = WM.all[kind].file;
+  b.disabled = true; b.textContent = "Working…";
+  const r = await fetch(`/api/watermarks/${encodeURIComponent(name)}/clean`, { method: "POST" });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Couldn't remove the background."); renderWmRows(); return; }
+  await loadWatermarks(); await saveLogo(kind, { file: d.name });
+  toast("Background removed - the cleaned copy is now used");
+});
+
+/* ===================== Settings dialog ===================== */
+const PATHS = { data: null, browsing: null };
+const PATH_INFO = {
+  output: ["Finished clips", "Your rendered shorts (MP4 + thumbnails), clips.json and the clip list page, one folder per video."],
+  work: ["Downloaded videos (cache)", "Source videos from YouTube, captions and transcripts. Kept so edits re-render fast; safe to clear."],
+};
+
+function setTab(t){
+  document.querySelectorAll("[data-stab]").forEach(b => b.setAttribute("aria-selected", b.dataset.stab === t));
+  document.querySelectorAll("[data-spanel]").forEach(p => p.hidden = p.dataset.spanel !== t);
+  if (t === "storage") loadPaths();
+}
+async function openSettings(tab = "logos"){
+  await loadWatermarks().catch(() => {});
+  setTab(tab);
+  $("settings").showModal();
+}
+$("open-settings").addEventListener("click", () => openSettings());
+$("close-settings").addEventListener("click", () => $("settings").close());
+document.querySelector(".set-tabs").addEventListener("click", e => { const b = e.target.closest("[data-stab]"); if (b) setTab(b.dataset.stab); });
+
+async function loadPaths(){
+  const d = await (await fetch("/api/paths")).json();
+  PATHS.data = d;
+  $("wm-path").textContent = d.watermarks;
+  $("pathcards").innerHTML = ["output", "work"].map(k => `
+    <div class="pathcard">
+      <h3>${PATH_INFO[k][0]}${d.custom[k] ? '<span class="badge">custom</span>' : '<span class="badge">default</span>'}</h3>
+      <p>${PATH_INFO[k][1]}</p>
+      <div class="pathrow"><code>${esc(d[k])}</code>
+        <button type="button" data-browse="${k}">Change…</button>
+        <button type="button" data-open="${k}">Open folder</button>
+        ${d.custom[k] ? `<button type="button" data-reset="${k}">Use default</button>` : ""}</div>
+      <div class="pathmeta">Using ${d[k + "_mb"] >= 1000 ? (d[k + "_mb"] / 1000).toFixed(2) + " GB" : d[k + "_mb"] + " MB"}${d.custom[k] ? ` · default is ${esc(d.defaults[k])}` : ""}</div>
+    </div>`).join("");
+}
+
+async function browseTo(path){
+  $("br-msg").textContent = "";
+  const r = await fetch("/api/fs?path=" + encodeURIComponent(path || ""));
+  const d = await r.json();
+  if (!r.ok) { $("br-msg").textContent = d.error || "Can't open that folder."; return; }
+  PATHS.cwd = d.path; PATHS.parent = d.parent;
+  $("br-input").value = d.path;
+  $("br-up").disabled = d.parent === null;
+  $("br-use").disabled = !d.path;
+  $("br-list").innerHTML = d.dirs.length ? d.dirs.map(x =>
+    `<button type="button" role="option" data-dir="${esc(x.path)}">📁 ${esc(x.name)}</button>`).join("")
+    : '<p class="set-note" style="padding:6px 8px">No sub-folders. Use this folder, or type a new folder path above - it will be created.</p>';
+}
+
+$("pathcards").addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.browse) {
+    PATHS.browsing = b.dataset.browse;
+    $("br-title").textContent = "Choose a folder for: " + PATH_INFO[b.dataset.browse][0];
+    $("browser").hidden = false;
+    browseTo(PATHS.data[b.dataset.browse]);
+    $("browser").scrollIntoView({ block: "nearest" });
+  }
+  if (b.dataset.reset) await savePath(b.dataset.reset, "");
+});
+document.getElementById("settings").addEventListener("click", async e => {
+  const o = e.target.closest("[data-open]"); if (!o) return;
+  const r = await fetch("/api/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ which: o.dataset.open }) });
+  toast(r.ok ? "Opened in Explorer" : "Couldn't open the folder");
+});
+$("br-list").addEventListener("click", e => { const b = e.target.closest("[data-dir]"); if (b) browseTo(b.dataset.dir); });
+$("br-up").addEventListener("click", () => browseTo(PATHS.parent || ""));
+$("br-go").addEventListener("click", () => browseTo($("br-input").value.trim()));
+$("br-input").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); browseTo($("br-input").value.trim()); } });
+$("br-cancel").addEventListener("click", () => { $("browser").hidden = true; });
+$("br-use").addEventListener("click", () => savePath(PATHS.browsing, $("br-input").value.trim()));
+
+async function savePath(kind, path){
+  const label = PATH_INFO[kind][0];
+  if (path && !confirm(`Use this folder for ${label}?\n\n${path}\n\nExisting files are not moved.`)) return;
+  const r = await fetch("/api/paths", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [kind]: path }) });
+  const d = await r.json();
+  if (!r.ok) { $("br-msg").textContent = d.error || "Couldn't use that folder."; toast(d.error || "Couldn't use that folder."); return; }
+  $("browser").hidden = true;
+  toast(`${label} now saved in ${kind === "output" ? d.output : d.work}`);
+  await loadPaths();
+  const items = await loadLibrary();
+  if (kind === "output") { items.length ? openRun(items[0].folder) : showEmpty(); }
+}
+
+function renderLogoStatus(){
+  if (!WM.all) return;
+  const on = LOGO_KINDS.filter(([k]) => WM.all[k].auto && WM.all[k].file).map(([, l]) => l);
+  $("gear-dot").hidden = !on.length;
+  $("logo-status").innerHTML = on.length
+    ? `New videos get: <b>${on.join(" + ")}</b> <button type="button" onclick="openSettings('logos')">Change</button>`
+    : `No logos are added to new videos. <button type="button" onclick="openSettings('logos')">Set up logos</button>`;
+}
+const _renderWmRows = renderWmRows;
+renderWmRows = function(){ _renderWmRows(); renderLogoStatus(); };
 
 (async () => {
   loadWatermarks().catch(() => {});

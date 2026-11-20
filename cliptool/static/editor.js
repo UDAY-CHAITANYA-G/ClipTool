@@ -476,7 +476,7 @@
         <p class="note">Fix words or spelling. Timing follows the speech. <button type="button" data-act="resettext">Reset to transcript</button></p>`;
     },
     logo(){
-      const lib = WM.images || [], def = WM.settings, im = selImg();
+      const lib = WM.images || [], im = selImg();
       const posName = (x, y) => Object.entries(WM.positions || {}).find(([, [px, py]]) => Math.abs(px - x) < 0.01 && Math.abs(py - y) < 0.01)?.[0];
       const full = S.images.length >= (WM.max || 3);
       let h = `<h3>Images on this clip (${S.images.length}/${WM.max || 3})</h3>
@@ -486,7 +486,8 @@
             <span class="tm">${x.end == null && !x.start ? "whole clip" : `${(x.start || 0).toFixed(1)}–${x.end == null ? outDur().toFixed(1) : x.end.toFixed(1)}s`}</span></button>`).join("")
           || '<p class="note">No images yet.</p>'}</div>
         <div class="btnrow">
-          ${def && def.file ? `<button type="button" data-act="adddefault" ${full ? "disabled" : ""}>+ Default watermark</button>` : ""}
+          ${LOGO_KINDS.filter(([k]) => WM.all && WM.all[k].file).map(([k, l]) =>
+            `<button type="button" data-act="adddefault" data-v="${k}" ${full ? "disabled" : ""}>+ ${l}</button>`).join("")}
           <label class="filebtn2">+ Upload image<input type="file" accept="image/png,image/jpeg,image/webp" data-upload="1" hidden ${full ? "disabled" : ""}></label>
         </div>
         ${lib.length ? `<h3>Your images</h3><div class="wmlib">${lib.map(x =>
@@ -504,7 +505,8 @@
         ${im.end == null && !im.start ? "" : `<div class="row"><label class="fld">From (s)<input type="number" step="0.1" min="0" value="${im.start || 0}" data-bind="selimg.start"></label>
           <label class="fld">Until (s)<input type="number" step="0.1" min="0" value="${im.end == null ? outDur().toFixed(1) : im.end}" data-bind="selimg.end"></label></div>
           <div class="btnrow"><button type="button" data-act="imgfrom">Start here</button><button type="button" data-act="imgto">End here</button></div>`}
-        <div class="btnrow"><button type="button" data-act="imgdefault">Make this the default watermark</button>
+        <div class="btnrow"><button type="button" data-act="imgdefault" data-v="watermark">Make this my channel logo</button>
+          <button type="button" data-act="imgdefault" data-v="title">Make this my title logo</button>
           <button type="button" class="danger" data-act="delimg">Remove from clip</button></div>`;
     },
     filters(){
@@ -594,16 +596,17 @@
     twhole: () => mutate("ttime", () => { const t = sel(); t.start = 0; t.end = +outDur().toFixed(1); }),
     selimg: v => { X.selImg = v; renderPanel(); refresh(); },
     addimg: v => addImage({ file: v }),
-    adddefault: () => { const d = WM.settings; addImage({ file: d.file, x: d.x, y: d.y, size: d.size, opacity: d.opacity }); },
+    adddefault: v => { const d = WM.all[v || "watermark"]; addImage({ file: d.file, x: d.x, y: d.y, size: d.size, opacity: d.opacity }); },
     imgpos: v => mutate("imgpos", () => { const [x, y] = WM.positions[v]; Object.assign(selImg(), { x, y }); }),
     imgfrom: () => mutate("imgtime", () => { const m = selImg(); m.start = +clamp(tOut(), 0, (m.end ?? outDur()) - 0.1).toFixed(1); }),
     imgto: () => mutate("imgtime", () => { const m = selImg(); m.end = +clamp(tOut(), (m.start || 0) + 0.1, outDur()).toFixed(1); }),
     delimg: () => { if (selImg()) mutate("delimg", () => { S.images = S.images.filter(i => i.id !== X.selImg); X.selImg = null; }); },
-    imgdefault: async () => {
+    imgdefault: async v => {
       const m = selImg(); if (!m) return;
+      const kind = v || "watermark";
       const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ watermark: { file: m.file, x: m.x, y: m.y, size: m.size, opacity: m.opacity, auto: true } }) });
-      if (r.ok) { await loadWatermarks(); toast("Saved as the default watermark - new clips get it automatically"); renderPanel(); }
+        body: JSON.stringify({ [kind]: { file: m.file, x: m.x, y: m.y, size: m.size, opacity: m.opacity, auto: true } }) });
+      if (r.ok) { await loadWatermarks(); toast(`Saved as your ${kind === "title" ? "title" : "channel"} logo - new clips get it automatically`); renderPanel(); }
       else toast("Couldn't save the default watermark.");
     },
     preset: v => mutate("preset", () => {
@@ -854,7 +857,7 @@
     const st = clip.style || {}, preset = C.presets[st.preset] ? st.preset : "highlight", p = C.presets[preset];
     X = { open: true, folder, rank, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
           lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null, selImg: null };
-    if (!WM.settings) await loadWatermarks();
+    if (!WM.all) await loadWatermarks();
     const n = (v, def) => v === null || v === undefined ? def : v;
     S = {
       title: clip.title, hook: clip.hook, start: clip.start, end: clip.end,
@@ -876,7 +879,7 @@
     hist = []; fut = []; lastKey = ""; dirty = false; el("ws-dirty").textContent = "";
     el("ws").hidden = false; document.body.style.overflow = "hidden";
     const v = video();
-    v.src = "/source/" + X.videoId;
+    v.src = d.source_url || ("/source/" + X.videoId);
     v.addEventListener("loadedmetadata", () => { v.currentTime = S.start; v.playbackRate = S.speed; }, { once: true });
     renderTicks(); renderPanel(); refresh();
     el("ws-title").focus();

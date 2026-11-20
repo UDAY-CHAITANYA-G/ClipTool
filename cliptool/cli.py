@@ -50,8 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--whisper", action="store_true", help="force local transcription with faster-whisper")
     r.add_argument("--whisper-model", default="small", help="faster-whisper model size (default small)")
     r.add_argument("--dry-run", action="store_true", help="score and list clips without rendering video")
-    r.add_argument("--out", type=Path, default=Path("output"), help="output folder (default output/)")
-    r.add_argument("--work", type=Path, default=Path("work"), help="cache folder (default work/)")
+    r.add_argument("--out", type=Path, help="folder for finished clips (default: Settings > Storage, else output/)")
+    r.add_argument("--work", type=Path, help="folder for downloaded videos (default: Settings > Storage, else work/)")
     r.add_argument("--cookies-from-browser", help="e.g. chrome, edge, firefox (for age-restricted videos)")
     _add_render_opts(r)
 
@@ -68,9 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("clean", help="delete downloaded videos (work/); --all also deletes every clip (output/)")
     c.add_argument("--all", action="store_true", help="also delete all clips in output/")
     c.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
-    c.add_argument("--work", type=Path, default=Path("work"))
-    c.add_argument("--out", type=Path, default=Path("output"))
+    c.add_argument("--work", type=Path)
+    c.add_argument("--out", type=Path)
     return p
+
+
+def _folder(kind: str) -> Path:
+    from .assets import folder
+
+    return folder(kind)
 
 
 def cmd_run(a: argparse.Namespace) -> int:
@@ -79,7 +85,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     o = pipeline.Options(
         url=a.url, count=a.count, min_s=a.min_s, max_s=a.max_s, aspect=a.aspect, fit=a.fit,
         captions=a.captions, caption_style=a.style, ai=a.ai, model=a.model, lang=a.lang, whisper=a.whisper,
-        whisper_model=a.whisper_model, dry_run=a.dry_run, out=a.out, work=a.work,
+        whisper_model=a.whisper_model, dry_run=a.dry_run, out=a.out or _folder("output"), work=a.work or _folder("work"),
         cookies_from_browser=a.cookies_from_browser, config=a.config)
     res = pipeline.run(o, log=lambda m: print(m, flush=True))
     report.print_table(res["clips"])
@@ -158,6 +164,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def cmd_clean(a: argparse.Namespace) -> int:
+    a.work, a.out = a.work or _folder("work"), a.out or _folder("output")
     targets = [p for p in ([a.work] + ([a.out] if a.all else [])) if p.exists()]
     if not targets:
         print("Nothing to clean.")

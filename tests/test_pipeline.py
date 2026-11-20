@@ -228,3 +228,43 @@ def test_watermark_images(tmp_path, monkeypatch):
     g = _video_filter("vertical", "blur", True, None, None, {"images": [layer, layer]}, out_dur=10.0, subs=True)
     assert "[1:v]format=rgba" in g and "[2:v]format=rgba" in g and "enable='between(t,0.00,10.00)'" in g
     assert g.index("overlay=x='1.0000*W-w/2'") < g.index("ass=subs.ass")  # images under captions
+
+
+def test_remove_background_fake_checkerboard():
+    import numpy as np
+    from cliptool.assets import remove_background
+
+    # 400x400: grey checkerboard, a white ring "logo" in the middle, a cream band at the bottom with a speck.
+    img = np.zeros((400, 400, 3), np.uint8)
+    yy, xx = np.mgrid[:400, :400]
+    img[:] = np.where(((yy // 20 + xx // 20) % 2 == 0)[..., None], 120, 165)
+    ring = (np.hypot(yy - 170, xx - 200) < 80) & (np.hypot(yy - 170, xx - 200) > 55)
+    img[ring] = 240
+    img[330:] = (232, 240, 245)          # cream band (BGR)
+    img[370:380, 370:380] = 255          # sparkle in the band
+    out = remove_background(img)
+    assert out.shape[2] == 4
+    h, w = out.shape[:2]
+    assert 150 <= w <= 200 and 150 <= h <= 200  # trimmed to the ring (+ small padding)
+    a = out[..., 3]
+    assert a[h // 2, w // 2] < 10            # checker inside the ring is transparent
+    assert a.max() == 255 and (a > 200).mean() > 0.15
+
+
+def test_storage_folders(tmp_path, monkeypatch):
+    import pytest
+    from cliptool import assets
+
+    monkeypatch.setattr(assets, "SETTINGS", tmp_path / "settings.json")
+    monkeypatch.setattr(assets, "ASSETS", tmp_path)
+    assert assets.folder("output").name == "output"
+    s = assets.set_folders({"output": str(tmp_path / "clips"), "work": str(tmp_path / "dl")})
+    assert (tmp_path / "clips").is_dir() and assets.folder("work") == (tmp_path / "dl").resolve()
+    with pytest.raises(ValueError):
+        assets.set_folders({"output": "relative/path"})
+    with pytest.raises(ValueError):
+        assets.set_folders({"output": str(tmp_path / "same"), "work": str(tmp_path / "same")})
+    assets.set_folders({"output": ""})
+    assert assets.folder("output").name == "output"
+    listing = assets.browse(str(tmp_path))
+    assert any(d["name"] == "clips" for d in listing["dirs"])

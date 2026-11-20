@@ -491,10 +491,12 @@ def _audio_filter(clip: dict, out_dur: float, loudness: float) -> str:
 
 
 def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, rank: int,
-                aspect: str, fit: str, captions: bool, cfg: dict) -> dict:
+                aspect: str, fit: str, captions: bool, cfg: dict, version: str = "") -> dict:
+    """Render one clip. `version` is added to the file name (re-renders use a fresh name, so a copy
+    still open in a player or Explorer never blocks the new render)."""
     clips_dir = out_dir / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
-    name = f"{rank:02d}_{slugify(clip['title'])}"
+    name = f"{rank:02d}_{slugify(clip['title'])}" + (f"_{version}" if version else "")
     mp4, jpg = clips_dir / f"{name}.mp4", clips_dir / f"{name}.jpg"
     speed = _num(clip, "speed", 1.0)
     start, dur = clip["start"], clip["end"] - clip["start"]

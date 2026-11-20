@@ -108,15 +108,15 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
         import shutil
 
         shutil.rmtree(out_dir / "clips", ignore_errors=True)  # drop clips from an earlier run
-        from .assets import default_layer_for_clip
+        from .assets import default_layers_for_clip
 
-        default_wm = default_layer_for_clip()
-        if default_wm:
-            log(f"  adding the default watermark to every clip")
+        default_imgs = default_layers_for_clip()
+        if default_imgs:
+            log(f"  adding {len(default_imgs)} default logo(s) to every clip")
         for c in clips:
             c["style"] = {"preset": o.caption_style}
-            if default_wm:
-                c["images"] = [dict(default_wm)]
+            if default_imgs:
+                c["images"] = [dict(i) for i in default_imgs]
             c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
         for k, c in enumerate(clips, 1):
             at(f"Rendering clip {k} of {len(clips)}", 0.55 + 0.43 * (k - 1) / len(clips))
@@ -319,6 +319,20 @@ def clean_changes(changes: dict, duration: float) -> dict:
     return out
 
 
+def _remove_when_free(p: Path, tries: int = 5) -> None:
+    """Delete an old clip file; if Windows still has it open (a player, Explorer), retry in the background."""
+    import threading
+
+    def attempt(n: int) -> None:
+        try:
+            p.unlink(missing_ok=True)
+        except PermissionError:
+            if n > 0:
+                threading.Timer(20, attempt, args=(n - 1,)).start()
+
+    attempt(tries)
+
+
 def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None] = print,
               stage: Callable[[str, float], None] | None = None) -> dict:
     """Apply edits to one clip of a run and re-render just that clip."""
@@ -347,9 +361,13 @@ def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None
         stage(f"Re-rendering clip #{rank}", 0.2)
     log(f"Re-rendering #{rank}: {clip['title']} ({clip['start']:.1f}-{clip['end']:.1f}s, {aspect}, {fit})")
     clips_dir = run_dir / "clips"
-    for old in list(clips_dir.glob(f"{rank:02d}_*")):
-        old.unlink()
-    clip.update(render.render_clip(source, clip, sentences, run_dir, rank, aspect, fit, captions, cfg))
+    old_files = [p for p in clips_dir.glob(f"{rank:02d}_*") if p.suffix in (".mp4", ".jpg")]
+    version = format(int(time.time() * 10) % 36 ** 4, "x")[-4:]  # fresh name: never blocked by an open old file
+    clip.update(render.render_clip(source, clip, sentences, run_dir, rank, aspect, fit, captions, cfg, version))
+    keep = {Path(clip["file"]).name, Path(clip["thumbnail"]).name}
+    for old in old_files:
+        if old.name not in keep:
+            _remove_when_free(old)
     clip["aspect"], clip["fit"], clip["captions"] = aspect, fit, captions
 
     recs = report.clip_records(info, clips, sentences)

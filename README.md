@@ -45,7 +45,14 @@ and these tools on the left:
 Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes the selected text, Ctrl+S saves.
 **Save & render** rebuilds only that clip (about 30–60 s). The template and text style for new runs are set on the main form.
 
-**Watermark:** on the main form, upload a PNG / JPG / WebP image (transparent PNG works best), choose its location, size and opacity, and tick **Add to new clips** - every new clip gets it automatically, already in place, and you can move or remove it per clip in the editor's Logo tool. Images are stored in `assets/watermarks`.
+**Settings (⚙ top right):**
+- **Logos** - a **Channel logo** (default spot: centred just below the captions) and a **Title logo** (default: top
+  centre, e.g. a game title). Upload PNG / JPG / WebP, choose location, size, opacity and **Add to new clips**: every
+  new video gets them automatically, in place. **Remove background** turns a logo with a fake checkerboard, solid or
+  black background into a clean transparent one (it also trims it and drops stray marks). Per clip, the editor's **Logo** tool moves, resizes or
+  removes them (up to 3 images per clip).
+- **Storage folders** - shows where finished clips and downloaded videos are stored (with space used), lets you
+  pick other folders with a folder browser, and opens them in Explorer. Existing files are not moved.
 
 **Grid / List:** the switch above the clips shows them as cards or as one row per clip (remembered).
 

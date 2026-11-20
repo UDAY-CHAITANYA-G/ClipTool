@@ -175,3 +175,71 @@ def score_candidates(cands, sentences, info, samples, rate, weights, cues=None) 
         local = (w["heatmap"] * Hn[k] + w["audio"] * An[k] + w["hooks"] * Tn[k] + w["pacing"] * Pn[k]
                  - (pen if c["chapter_cross"] else 0.0))
         c["local"] = round(float(local), 4)
+
+
+# ---- hook intro: the most gripping 3-5 s inside a clip, to play first ------------------------
+
+SENT_END_RE = re.compile(r"[.?!]['\")]*$")
+
+
+def find_hook(clip: dict, sentences: list[dict], info: dict, source, cues=None,
+              min_len: float = 3.0, max_len: float = 5.0, skip_start: float = 3.0) -> dict | None:
+    """Pick a 3-5 s teaser from inside the clip (not its first seconds, which play anyway).
+
+    Every window that starts on a word and ends on a word end is scored on:
+      heatmap (most replayed) 0.25   audio energy / reactions 0.30
+      words (question, number, strong claim; no filler start) 0.25
+      clean ending 0.10   opens a thought (sentence start / after a pause) 0.15
+    Returns {"start", "end", "text", "score"} in source seconds, or None.
+    """
+    from .ffmpeg import read_audio_range
+
+    words = [w for s in sentences if s["end"] > clip["start"] and s["start"] < clip["end"] for w in s["words"]
+             if clip["start"] + skip_start <= w["s"] and w["e"] <= clip["end"] and w["w"] not in (">>", "&gt;&gt;")]
+    if len(words) < 3:
+        return None
+    rate, hop = 8000, 0.25
+    samples = read_audio_range(source, clip["start"], clip["end"] - clip["start"] + 0.5, rate)
+    n = len(samples) // int(rate * hop)
+    if n:
+        frames = samples[: n * int(rate * hop)].reshape(n, -1)
+        db = 20 * np.log10(np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-6)
+        loud = (db > np.percentile(db, 75)).astype(float)
+        cum = np.concatenate([[0.0], np.cumsum(loud)])
+    heat = info.get("heatmap") or []
+    reacts = sorted(c["t"] for c in (cues or []) if c.get("reaction"))
+
+    def heat_at(a, b):
+        vals = [h["value"] for h in heat if h["end_time"] > a and h["start_time"] < b]
+        return max(vals) if vals else 0.0
+
+    cands = []
+    for i in range(len(words)):
+        for j in range(i, len(words)):
+            a, b = words[i]["s"], words[j]["e"]
+            d = b - a
+            if d > max_len:
+                break
+            if d < min_len:
+                continue
+            text = " ".join(w["w"] for w in words[i:j + 1])
+            ai, bi = int((a - clip["start"]) / hop), int((b - clip["start"]) / hop)
+            audio = (cum[min(bi, n)] - cum[min(ai, n)]) / max(1, bi - ai) if n else 0.0
+            audio += 0.5 * min(2, sum(1 for t in reacts if a - 0.5 <= t <= b + 1.5))
+            tokens = WORD_RE.findall(text.lower())
+            words_s = hook_score_text(text, tokens)
+            ending = 1.0 if SENT_END_RE.search(words[j]["w"]) else 0.0
+            # A hook should open a thought: start of a sentence, or after a pause.
+            prev = words[i - 1] if i else None
+            opens = 1.0 if (prev is None or SENT_END_RE.search(prev["w"]) or words[i]["s"] - prev["e"] > 0.35) else 0.0
+            if SENT_END_RE.search(words[i]["w"]) and j > i:
+                opens = -1.0  # never start on the last word of a sentence
+            cands.append([a, b, text, heat_at(a, b), audio, words_s, ending, opens])
+    if not cands:
+        return None
+    arr = np.array([c[3:] for c in cands], dtype=float)
+    norm = np.column_stack([_norm(arr[:, k]) for k in range(arr.shape[1])])
+    score = norm @ np.array([0.25 if heat else 0.0, 0.30, 0.25, 0.10, 0.15])
+    k = int(np.argmax(score))
+    a, b, text = cands[k][:3]
+    return {"start": round(a - 0.1, 2), "end": round(b + 0.15, 2), "text": text, "score": round(float(score[k]), 3)}

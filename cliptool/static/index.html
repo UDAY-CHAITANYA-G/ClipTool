@@ -78,6 +78,7 @@ details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10
 .tags{display:flex;gap:4px;overflow:hidden;flex-wrap:nowrap;mask-image:linear-gradient(90deg,#000 85%,transparent)}
 .tag{font-size:10.5px;padding:1px 6px;border-radius:999px;border:1px solid var(--line);color:var(--quiet);white-space:nowrap;flex:none}
 .tag.gta{border-color:#c2408a;color:#e0569e}
+.tag.hooktag{border-color:#ec4899;color:#ec4899}
 .more{font-size:12px;color:var(--quiet)}
 .more summary{cursor:pointer;list-style:none;font-size:11.5px}
 .more summary::-webkit-details-marker{display:none}
@@ -225,6 +226,7 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
             </optgroup>
           </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
+        <label class="check" title="Each clip starts with its most gripping 3-5 seconds, then plays from the beginning"><input id="hookintro" type="checkbox"> Hook intro</label>
       </div>
       <p class="logo-status" id="logo-status"></p>
       <div class="msg" id="msg"></div>
@@ -331,7 +333,7 @@ async function poll(id){
 $("f").addEventListener("submit", async e => {
   e.preventDefault(); $("msg").textContent = "";
   const body = { url: $("url").value.trim(), count: +$("count").value, min: +$("min").value, max: +$("max").value,
-                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value };
+                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked };
   if (body.min >= body.max) { $("msg").textContent = "Min length must be smaller than max length."; return; }
   setBusy(true);
   const r = await fetch("/api/jobs", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
@@ -360,6 +362,7 @@ function clipTags(c, aspect){
   else if (st) html += `<span class="tag${st.group === "gta" ? " gta" : ""}">Captions: ${esc(st.label)}</span>`;
   if (c.speed && c.speed !== 1) html += `<span class="tag">${c.speed}×</span>`;
   if ((c.texts || []).length) html += `<span class="tag">${c.texts.length} text</span>`;
+  if (c.hook_intro && c.hook_intro.on) html += `<span class="tag hooktag">Hook intro</span>`;
   if (c.edited) html += `<span class="tag">Edited</span>`;
   return html;
 }

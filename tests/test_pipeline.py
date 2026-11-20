@@ -268,3 +268,27 @@ def test_storage_folders(tmp_path, monkeypatch):
     assert assets.folder("output").name == "output"
     listing = assets.browse(str(tmp_path))
     assert any(d["name"] == "clips" for d in listing["dirs"])
+
+
+def test_find_hook_picks_loud_strong_moment(monkeypatch):
+    import numpy as np
+    from cliptool import ffmpeg, signals
+
+    text = ("so we went there and then we drove around for a while and it was fine okay. "
+            "Why does nobody tell you this secret? anyway we kept going home after that").split()
+    words, t = [], 0.0
+    for w in text:
+        words.append({"w": w, "s": round(t, 2), "e": round(t + 0.35, 2)})
+        t += 0.4
+    q0 = next(w["s"] for w in words if w["w"] == "Why")
+    q1 = next(w["e"] for w in words if w["w"] == "secret?")
+    # Loud exactly while the question is spoken.
+    rate = 8000
+    audio = np.full(int(rate * (t + 1)), 0.01, np.float32)
+    audio[int(rate * q0): int(rate * q1)] = 0.6
+    monkeypatch.setattr(ffmpeg, "read_audio_range", lambda *a, **k: audio)
+    sentences = [{"start": 0, "end": t, "text": " ".join(text), "words": words}]
+    h = signals.find_hook({"start": 0.0, "end": t}, sentences, {"heatmap": []}, None)
+    assert h and 3.0 <= h["end"] - h["start"] <= 5.5
+    assert h["text"].startswith("Why") and "secret?" in h["text"]  # opens the thought, ends on the payoff
+    assert h["start"] >= 3.0 - 0.1  # never from the clip's first seconds

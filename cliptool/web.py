@@ -340,6 +340,24 @@ class Handler(BaseHTTPRequestHandler):
                                "aspects": {k: {"label": v["label"], "size": v["size"], "cap_scale": v["cap_scale"],
                                                "bottom": v["bottom"], "top": v["top"]} for k, v in render.ASPECTS.items()},
                                "fonts": render.FONTS, "quality": list(render.QUALITY), "effects": render.EFFECTS})
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/hook", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                data, info, sentences, source = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from .signals import find_hook
+            from .cache import Work
+
+            wd = Path(data["settings"]["work_dir"])
+            cues = Work(wd.parent, wd.name).load("transcript.json").get("cues")
+            return self._json({"hook": find_hook(clip, sentences, info, source, cues)})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/facecam", path)
         if m:
             run = _run_dir(m.group(1))
@@ -436,6 +454,7 @@ class Handler(BaseHTTPRequestHandler):
                 style = "highlight"
             opts = pipeline.Options(url=url, count=count, min_s=min_s, max_s=max_s, aspect=aspect, fit=fit,
                                     captions=bool(body.get("captions", True)), caption_style=style,
+                                    hook_intro=bool(body.get("hook_intro")),
                                     out=OUTPUT, work=WORK)
 
             def work(log, stage, cancelled):

@@ -375,8 +375,8 @@ def window(sw: int, sh: int, aspect: float, zoom: float, cx: float, cy: float) -
     return cw, ch, x, y
 
 
-def _layout(aspect: str, fit: str, x: int | None, source: Path | None, clip: dict) -> str:
-    """Filtergraph from [0:v] to [base]: the frame laid out at the output size."""
+def _layout(aspect: str, fit: str, x: int | None, source: Path | None, clip: dict, vin: str = "{vin}") -> str:
+    """Filtergraph from `vin` (default [0:v]) to [base]: the frame laid out at the output size."""
     W, H = SIZES[aspect]
     zoom = _num(clip, "zoom", 1.0)
     if fit == "stack" and source is not None:
@@ -389,32 +389,32 @@ def _layout(aspect: str, fit: str, x: int | None, source: Path | None, clip: dic
         gw, gh, gx, gy = window(sw, sh, W / game_h, _num(clip, "game_zoom", 1.0),
                                 _num(clip, "game_x", 0.5), _num(clip, "game_y", 0.5))
         order = "[top][bot]" if (clip.get("cam_pos") or "top") == "top" else "[bot][top]"
-        return (f"[0:v]split=2[cam][game];"
+        return (f"{vin}split=2[cam][game];"
                 f"[cam]crop=iw*{fc['w']:.4f}:ih*{fc['h']:.4f}:iw*{fc['x']:.4f}:ih*{fc['y']:.4f},"
                 f"scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h}[top];"
                 f"[game]crop={gw}:{gh}:{gx}:{gy},scale={W}:{game_h}[bot];"
                 f"{order}vstack=2,setsar=1[base]")
     if fit == "pan":
         # pan.cmd (written next to the clip) moves the crop window frame by frame.
-        return f"[0:v]scale=-2:{H},sendcmd=f=pan.cmd,crop@pan={W}:{H}:{x or 0}:0,setsar=1[base]"
+        return f"{vin}scale=-2:{H},sendcmd=f=pan.cmd,crop@pan={W}:{H}:{x or 0}:0,setsar=1[base]"
     if fit == "crop" and source is not None:
         from .framing import video_size
 
         sw, sh = video_size(str(source))
         if x is not None and zoom <= 1.0 and clip.get("crop_x") is None:  # auto: face-centred crop
-            return f"[0:v]scale=-2:{H},crop={W}:{H}:{x}:0,setsar=1[base]"
+            return f"{vin}scale=-2:{H},crop={W}:{H}:{x}:0,setsar=1[base]"
         cw, ch, cx, cy = window(sw, sh, W / H, zoom, _num(clip, "crop_x", 0.5), _num(clip, "crop_y", 0.5))
-        return f"[0:v]crop={cw}:{ch}:{cx}:{cy},scale={W}:{H},setsar=1[base]"
+        return f"{vin}crop={cw}:{ch}:{cx}:{cy},scale={W}:{H},setsar=1[base]"
     if fit in ("blur", "black") or aspect == "original":
         fg_w = _even(W * zoom)
         fg = f"scale={fg_w}:{_even(H * zoom)}:force_original_aspect_ratio=decrease"
         if fit == "black" or (aspect == "original" and fit != "blur"):
-            return (f"color=c=black:s={W}x{H}[bg];[0:v]{fg}[fg];"
+            return (f"color=c=black:s={W}x{H}[bg];{vin}{fg}[fg];"
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1[base]")
-        return (f"[0:v]split=2[a][b];"
+        return (f"{vin}split=2[a][b];"
                 f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=25:3,eq=brightness=-0.08[bg];"
                 f"[b]{fg}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]")
-    return f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[base]"
+    return f"{vin}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[base]"
 
 
 def image_layers(clip: dict) -> list[dict]:
@@ -431,11 +431,15 @@ def image_layers(clip: dict) -> list[dict]:
 
 def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None,
                   source: Path | None = None, clip: dict | None = None, out_dur: float | None = None,
-                  subs: bool | None = None) -> str:
-    """Full filtergraph [0:v] -> [v]: layout, look, speed, fades, progress bar, captions/text."""
+                  subs: bool | None = None, pre: str = "", vin: str = "[0:v]", img_input: int = 1,
+                  shift: float = 0.0) -> str:
+    """Full filtergraph -> [v]: layout, look, speed, fades, progress bar, logos, captions/text.
+
+    `pre` is prepended (e.g. the hook-intro concat producing `vin`); images are inputs img_input..;
+    `shift` delays timed images by that many output seconds (the hook plays first)."""
     clip = clip or {}
     W, H = SIZES[aspect]
-    graph = _layout(aspect, fit, x, source, clip)
+    graph = pre + _layout(aspect, fit, x, source, clip, vin)
     speed = _num(clip, "speed", 1.0)
     chain = [p for p in (filter_chain(clip.get("filters")),) if p]
     if abs(speed - 1.0) > 1e-3:
@@ -457,10 +461,11 @@ def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None,
         last = "[pbv]"
     # Image overlays (watermarks / logos): inputs 1..n, under the captions and text.
     for k, img in enumerate(image_layers(clip)):
-        a = float(img.get("start") or 0)
-        b = min(float(img["end"]), out_dur or 1e9) if img.get("end") is not None else (out_dur or 1e9)
+        timed = img.get("end") is not None or float(img.get("start") or 0) > 0
+        a = float(img.get("start") or 0) + (shift if timed else 0)
+        b = min(float(img["end"]) + shift, out_dur or 1e9) if img.get("end") is not None else (out_dur or 1e9)
         w = _even(W * float(img.get("size", 0.18)))
-        graph += (f";[{k + 1}:v]format=rgba,scale={w}:-2,colorchannelmixer=aa={float(img.get('opacity', 0.85)):.2f}[wm{k}];"
+        graph += (f";[{k + img_input}:v]format=rgba,scale={w}:-2,colorchannelmixer=aa={float(img.get('opacity', 0.85)):.2f}[wm{k}];"
                   f"{last}[wm{k}]overlay=x='{float(img['x']):.4f}*W-w/2':y='{float(img['y']):.4f}*H-h/2'"
                   f":enable='between(t,{a:.2f},{b:.2f})'[im{k}]")
         last = f"[im{k}]"
@@ -503,7 +508,14 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     # Small lead-in/out so the first and last words are not clipped.
     pre = min(0.15, start)
     start, dur = start - pre, dur + pre + 0.25
-    out_dur = dur / speed
+
+    # Hook intro: a 2-8 s teaser (source seconds hs..he) plays first, then the clip from its start.
+    hook = clip.get("hook_intro") or {}
+    hs, he = hook.get("start"), hook.get("end")
+    use_hook = bool(hook.get("on")) and hs is not None and he is not None and 1.0 <= he - hs <= 10.0
+    hd = (he - hs) if use_hook else 0.0
+    hook_out = hd / speed
+    out_dur = (hd + dur) / speed
 
     texts = clip.get("texts") or []
     subs = bool(captions or texts)
@@ -511,9 +523,19 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         words = words_between(sentences, clip["start"], clip["end"]) if captions else []
         if captions and clip.get("caption_text"):
             words = align_text(words, clip["caption_text"])
+        if use_hook:
+            # One timeline: teaser words at 0..hd, then the clip's words after it.
+            teaser = words_between(sentences, hs, he) if captions else []
+            words = ([{**w, "s": w["s"] - hs, "e": min(w["e"], he) - hs} for w in teaser] +
+                     [{**w, "s": hd + w["s"] - start, "e": hd + w["e"] - start} for w in words])
+            texts = [{**t, "start": float(t.get("start", 0)) + hook_out, "end": float(t.get("end", 0)) + hook_out}
+                     for t in texts]
+            t0, t1 = 0.0, hd + dur
+        else:
+            t0, t1 = start, start + dur
         style = caption_style(cfg["captions"], clip.get("style"))
         (clips_dir / "subs.ass").write_text(
-            build_ass(words, start, start + dur, SIZES[aspect], style, aspect, speed, texts, captions),
+            build_ass(words, t0, t1, SIZES[aspect], style, aspect, speed, texts, captions),
             encoding="utf-8")
 
     x = None
@@ -535,18 +557,37 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         used_fit = plan["mode"]
         if used_fit == "crop":
             x = crop_x(source, plan["x"])
+        elif used_fit == "pan" and use_hook:
+            # The pan path is timed to the clip alone; with a teaser in front, hold its middle position.
+            used_fit = "crop"
+            xs = sorted(c for _, c in plan["path"])
+            x = crop_x(source, xs[len(xs) // 2])
         elif used_fit == "pan":
             (clips_dir / "pan.cmd").write_text(pan_commands(source, plan["path"], dur), encoding="utf-8")
             x = crop_x(source, plan["path"][0][1])
 
     enc = cfg["encode"]
     crf = QUALITY.get(clip.get("quality", "standard"), enc["crf"])
+    src_inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(source.resolve())]
+    if use_hook:
+        from .ffmpeg import has_audio
+
+        audio = has_audio(source)
+        src_inputs = ["-ss", f"{hs:.3f}", "-t", f"{hd:.3f}", "-i", str(source.resolve())] + src_inputs
+        pre_graph = ("[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[hv][ha];" if audio else "[0:v][1:v]concat=n=2:v=1:a=0[hv];")
+        vgraph = _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs,
+                               pre=pre_graph, vin="[hv]", img_input=2, shift=hook_out)
+        if audio:
+            vgraph += f";[ha]{_audio_filter(clip, out_dur, enc['loudness_lufs'])}[aout]"
+        audio_args = ["-map", "[v]"] + (["-map", "[aout]"] if audio else [])
+    else:
+        vgraph = _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs)
+        audio_args = ["-map", "[v]", "-map", "0:a:0?", "-af", _audio_filter(clip, out_dur, enc["loudness_lufs"])]
     ffmpeg_run([
-        "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(source.resolve()),
+        *src_inputs,
         *[arg for img in image_layers(clip) for arg in ("-i", str(img["path"]))],
-        "-filter_complex", _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs),
-        "-map", "[v]", "-map", "0:a:0?",
-        "-af", _audio_filter(clip, out_dur, enc["loudness_lufs"]),
+        "-filter_complex", vgraph,
+        *audio_args,
         "-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p",
         "-preset", str(enc["preset"]), "-crf", str(crf),
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{out_dur:.3f}",

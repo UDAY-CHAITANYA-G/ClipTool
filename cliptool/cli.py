@@ -46,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="optional: also ask Claude to rank and title clips (needs an Anthropic API key)")
     r.add_argument("--model", help="Claude model when --ai is used (default claude-opus-5-5)")
     r.add_argument("--style", default="highlight", help="caption style: highlight, box, single, neon, minimal, subtitle; GTA 6 themes: vice, wasted, mission, leonida, heist, wanted, phone, ocean")
+    r.add_argument("--hook-intro", action="store_true", help="start each clip with its best 3-5 s moment, then play the clip")
     r.add_argument("--lang", default="en", help="caption/transcription language (default en)")
     r.add_argument("--whisper", action="store_true", help="force local transcription with faster-whisper")
     r.add_argument("--whisper-model", default="small", help="faster-whisper model size (default small)")
@@ -84,7 +85,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
     o = pipeline.Options(
         url=a.url, count=a.count, min_s=a.min_s, max_s=a.max_s, aspect=a.aspect, fit=a.fit,
-        captions=a.captions, caption_style=a.style, ai=a.ai, model=a.model, lang=a.lang, whisper=a.whisper,
+        captions=a.captions, caption_style=a.style, hook_intro=a.hook_intro, ai=a.ai, model=a.model, lang=a.lang, whisper=a.whisper,
         whisper_model=a.whisper_model, dry_run=a.dry_run, out=a.out or _folder("output"), work=a.work or _folder("work"),
         cookies_from_browser=a.cookies_from_browser, config=a.config)
     res = pipeline.run(o, log=lambda m: print(m, flush=True))

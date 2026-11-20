@@ -23,6 +23,7 @@ class Options:
     fit: str = "auto"
     captions: bool = True
     caption_style: str = "highlight"
+    hook_intro: bool = False          # play the best 3-5 s of each clip first, then the clip
     ai: bool = False
     model: str | None = None
     lang: str = "en"
@@ -113,8 +114,14 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
         default_imgs = default_layers_for_clip()
         if default_imgs:
             log(f"  adding {len(default_imgs)} default logo(s) to every clip")
+        if o.hook_intro:
+            log("  finding a 3-5 s hook for each clip")
         for c in clips:
             c["style"] = {"preset": o.caption_style}
+            if o.hook_intro:
+                h = signals.find_hook(c, sentences, info, source, tr.get("cues"))
+                if h:
+                    c["hook_intro"] = {"on": True, "start": h["start"], "end": h["end"], "text": h["text"]}
             if default_imgs:
                 c["images"] = [dict(i) for i in default_imgs]
             c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
@@ -269,6 +276,18 @@ def clean_changes(changes: dict, duration: float) -> dict:
                                "position": "top" if pb.get("position") == "top" else "bottom"}
     if "texts" in changes:
         out["texts"] = clean_texts(changes["texts"])
+    if "hook_intro" in changes:
+        h = changes["hook_intro"] or {}
+        if not h.get("on"):
+            out["hook_intro"] = {"on": False, "start": h.get("start"), "end": h.get("end"), "text": h.get("text")}
+        else:
+            hs, he = float(h["start"]), float(h["end"])
+            if hs < 0 or (duration and he > duration + 0.5):
+                raise ValueError("The hook must be inside the video.")
+            if not 1.0 <= he - hs <= 10.0:
+                raise ValueError("A hook intro must be 1-10 seconds long.")
+            out["hook_intro"] = {"on": True, "start": round(hs, 2), "end": round(he, 2),
+                                 "text": str(h.get("text") or "")[:300]}
     if "images" in changes:
         from .assets import MAX_IMAGES_PER_CLIP, clean_layer
 

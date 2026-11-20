@@ -85,6 +85,7 @@
         <div class="track" id="ws-track" title="Click to jump; drag the orange handles to trim">
           <div class="ticks" id="ws-ticks"></div>
           <div class="sel" id="ws-sel"><div class="h l" data-h="start"></div><div class="h r" data-h="end"></div></div>
+          <div class="hk" id="ws-hk" hidden title="Hook intro - plays first"></div>
           <div class="ph" id="ws-ph"></div>
         </div>
         <div class="ttrack" id="ws-ttrack"></div>
@@ -98,7 +99,9 @@
   const outSize = () => C.aspects[S.aspect].size;
   const outDur = () => (S.end - S.start) / S.speed;
   const video = () => el("ws-video");
-  const tOut = () => (video().currentTime - S.start) / S.speed;
+  const tOut = () => X.phase === "hook" ? -1 : (video().currentTime - S.start) / S.speed;
+  const hookOn = () => S.hook && S.hook.on && S.hook.start != null && S.hook.end != null;
+  const hookLen = () => hookOn() ? S.hook.end - S.hook.start : 0;
   const sel = () => S.texts.find(t => t.id === X.selText);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
@@ -328,7 +331,12 @@
     el("ws-sel").style.left = pct(S.start) + "%"; el("ws-sel").style.width = (S.end - S.start) / span * 100 + "%";
     el("ws-ph").style.left = pct(clamp(v.currentTime, X.lo, X.hi)) + "%";
     const d = S.end - S.start;
-    el("ws-tl-l").textContent = `Clip ${fmt(S.start)} – ${fmt(S.end)} · ${d.toFixed(1)} s source → ${outDur().toFixed(1)} s output`;
+    const total = outDur() + hookLen() / S.speed;
+    el("ws-tl-l").textContent = `Clip ${fmt(S.start)} – ${fmt(S.end)} · ${d.toFixed(1)} s source → ${total.toFixed(1)} s output` +
+      (hookOn() ? ` (incl. ${(hookLen() / S.speed).toFixed(1)} s hook)` : "");
+    const hk = el("ws-hk");
+    if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hook.start) + "%"; hk.style.width = Math.max(0.4, (S.hook.end - S.hook.start) / span * 100) + "%"; }
+    else hk.hidden = true;
     el("ws-tl-r").textContent = outDur() > 60 ? "Longer than 60 s: too long for YouTube Shorts" : "";
     const tt = el("ws-ttrack");
     tt.innerHTML = S.texts.map(t => {
@@ -416,6 +424,18 @@
             <button type="button" data-act="sethere" data-k="${k}">Set here</button>
             <button type="button" data-act="snap" data-k="${k}">Snap</button></div></div>`).join("")}
         <p class="note">Drag the orange handles on the timeline too. "Snap" moves to the nearest sentence edge.</p>
+        <h3>Hook intro</h3>
+        <p class="note" style="margin-top:0">Plays the most gripping 3-5 s first, then the clip from its start.</p>
+        <label class="fld chk"><input type="checkbox" data-act-check="hookon" ${hookOn() ? "checked" : ""}> Start with a hook</label>
+        <div class="btnrow"><button type="button" data-act="findhook">Find best hook</button>
+          ${S.hook && S.hook.start != null ? `<button type="button" data-act="playhook">▶ Preview hook + clip</button>` : ""}</div>
+        ${S.hook && S.hook.start != null ? `<div class="hookbox${hookOn() ? "" : " off"}">
+          <div class="hooktext">“${esc(S.hook.text || "")}”</div>
+          <div class="hookmeta">${fmt(S.hook.start)}–${fmt(S.hook.end)} · ${(S.hook.end - S.hook.start).toFixed(1)} s</div>
+          <div class="btnrow"><button type="button" data-act="hookset" data-k="start">Start here</button>
+            <button type="button" data-act="hookset" data-k="end">End here</button>
+            <button type="button" data-act="hooknudge" data-k="start" data-v="-0.5">Start −0.5s</button>
+            <button type="button" data-act="hooknudge" data-k="end" data-v="0.5">End +0.5s</button></div></div>` : ""}
         <h3>Speed</h3>${chips("speed", SPEEDS.map(v => [v, v + "×"]), S.speed)}${rng("Custom speed", "speed", 0.5, 2, 0.05, FMT.x)}
         <p class="note">Captions and text keep their timing at any speed. Output length: ${outDur().toFixed(1)} s.</p>`;
     },
@@ -577,6 +597,28 @@
       const k = b.dataset.k, x = S[k];
       setRange(k, X.bounds.reduce((a, c) => Math.abs(c - x) < Math.abs(a - x) ? c : a, x));
     }),
+    findhook: async () => {
+      const b = document.querySelector('#ws [data-act="findhook"]'); if (b) { b.disabled = true; b.textContent = "Finding…"; }
+      try {
+        const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/hook`);
+        const d = await r.json();
+        if (!r.ok || !d.hook) { toast(d.error || "No good hook found in this clip."); renderPanel(); return; }
+        mutate("hook", () => { S.hook = { on: true, start: d.hook.start, end: d.hook.end, text: d.hook.text }; });
+        toast("Hook found: " + d.hook.text.slice(0, 60));
+      } finally { const b2 = document.querySelector('#ws [data-act="findhook"]'); if (b2) { b2.disabled = false; b2.textContent = "Find best hook"; } }
+    },
+    playhook: () => { const v = video(); X.phase = "hook"; v.currentTime = S.hook.start; v.playbackRate = S.speed; v.play(); },
+    hookset: (v, b) => mutate("hooktime", () => {
+      const t = video().currentTime, h = S.hook;
+      if (b.dataset.k === "start") h.start = +Math.min(t, h.end - 1).toFixed(2); else h.end = +Math.max(t, h.start + 1).toFixed(2);
+      h.text = X.words.filter(w => w.s >= h.start - 0.05 && w.s < h.end).map(w => w.w).join(" ");
+    }),
+    hooknudge: (v, b) => mutate("hooktime", () => {
+      const h = S.hook, k = b.dataset.k;
+      h[k] = +(h[k] + +v).toFixed(2);
+      if (h.end - h.start < 1) h[k === "start" ? "start" : "end"] = k === "start" ? h.end - 1 : h.start + 1;
+      h.text = X.words.filter(w => w.s >= h.start - 0.05 && w.s < h.end).map(w => w.w).join(" ");
+    }),
     speed: v => mutate("speed", () => { S.speed = +v; video().playbackRate = S.speed; }),
     addtext: v => {
       const p = TEXT_PRESETS[v], D = outDur(), t0 = clamp(tOut(), 0, D - 0.5);
@@ -640,7 +682,12 @@
   function seekOut(t){ video().currentTime = S.start + clamp(t, 0, outDur()) * S.speed; }
   function togglePlay(){
     const v = video();
-    if (v.paused) { if (v.currentTime < S.start || v.currentTime >= S.end - 0.05) v.currentTime = S.start; v.playbackRate = S.speed; v.play(); }
+    if (v.paused) {
+      const fromTop = v.currentTime < S.start || v.currentTime >= S.end - 0.05;
+      if (fromTop && hookOn()) { X.phase = "hook"; v.currentTime = S.hook.start; }
+      else if (fromTop) { X.phase = "main"; v.currentTime = S.start; }
+      v.playbackRate = S.speed; v.play();
+    }
     else v.pause();
   }
 
@@ -696,6 +743,10 @@
         try { const im = await uploadWatermark(f); addImage({ file: im.name }); toast("Image uploaded and added"); }
         catch (err) { toast(err.message); }
       }
+      if (e.target.matches('[data-act-check="hookon"]')) {
+        if (e.target.checked && !(S.hook && S.hook.start != null)) { e.target.checked = false; ACTS.findhook(); return; }
+        mutate("hookon", () => { S.hook.on = e.target.checked; });
+      }
       if (e.target.matches('[data-act-check="imgwhole"]')) {
         mutate("imgtime", () => { const m = selImg(); if (e.target.checked) { m.start = 0; m.end = null; } else { m.start = 0; m.end = +outDur().toFixed(1); } });
       }
@@ -707,7 +758,8 @@
     v.addEventListener("seeked", refresh);
     const tick = () => {
       if (!X.open) return;
-      if (!v.paused && v.currentTime >= S.end) { v.pause(); v.currentTime = S.end; }
+      if (X.phase === "hook" && v.currentTime >= S.hook.end) { X.phase = "main"; v.currentTime = S.start; }
+      else if (!v.paused && v.currentTime >= S.end) { v.pause(); v.currentTime = S.end; X.phase = "main"; }
       refresh();
       document.querySelector('#ws [data-act="play"]').textContent = v.paused ? "▶ Play" : "❚❚ Pause";
       if (!v.paused) requestAnimationFrame(tick);
@@ -871,6 +923,7 @@
                ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
       texts: (clip.texts || []).map(t => ({ ...t })),
       images: (clip.images || []).map(i => ({ ...i })),
+      hook: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
@@ -900,7 +953,8 @@
       cam_share: S.cam_share, cam_pos: S.cam_pos, game_x: S.game_x, game_y: S.game_y, game_zoom: S.game_zoom,
       speed: S.speed, filters: S.filters, captions: S.captions,
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
-      style: S.style, texts: S.texts, images: S.images, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
+      style: S.style, texts: S.texts, images: S.images,
+      hook_intro: S.hook && S.hook.start != null ? S.hook : { on: false }, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };
     if (S.fit === "stack") body.facecam = S.facecam || C.default_facecam;

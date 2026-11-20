@@ -47,3 +47,19 @@ def read_audio(path: Path, rate: int = 8000):
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg audio decode failed: {proc.stderr.decode(errors='replace')[-1000:]}")
     return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def read_audio_range(path: Path, start: float, dur: float, rate: int = 8000):
+    """Mono float32 audio of just [start, start+dur) - fast, for scoring parts of one clip."""
+    import numpy as np
+
+    cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, start):.3f}", "-t", f"{dur:.3f}",
+           "-i", str(path), "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"]
+    proc = subprocess.run(cmd, capture_output=True)
+    return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def has_audio(path: Path) -> bool:
+    proc = subprocess.run([ffmpeg_exe(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    return "Audio:" in proc.stderr

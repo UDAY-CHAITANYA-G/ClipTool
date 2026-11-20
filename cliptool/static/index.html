@@ -353,17 +353,20 @@ function showJob(j){
     : j.stage;
   $("pct").textContent = pct + "%";
   $("barfill").style.width = (j.status === "done" ? 100 : pct) + "%";
-  $("cancel").style.display = j.status === "running" ? "" : "none";
+  $("cancel").style.display = j.status === "running" || j.status === "queued" ? "" : "none";
+  if (j.status === "queued") $("stage").textContent = "⏳ Queued - " + j.stage.charAt(0).toLowerCase() + j.stage.slice(1) + ", then it starts automatically";
   const log = $("log"); const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   log.textContent = (j.log || []).join("\n"); if (atEnd) log.scrollTop = log.scrollHeight;
 }
 
+let currentJob = null;
 async function poll(id){
   clearTimeout(pollTimer);
+  currentJob = id;
   try {
     const r = await fetch("/api/jobs/" + id); const j = await r.json();
     showJob(j);
-    if (j.status === "running") { pollTimer = setTimeout(() => poll(id), 1000); return; }
+    if (j.status === "running" || j.status === "queued") { pollTimer = setTimeout(() => poll(id), 1000); return; }
     setBusy(false);
     if (j.status === "done") { await loadLibrary(); openRun(j.result.folder); }
   } catch (e) { pollTimer = setTimeout(() => poll(id), 2000); }
@@ -384,7 +387,8 @@ $("f").addEventListener("submit", async e => {
 
 $("cancel").addEventListener("click", async () => {
   const r = await fetch("/api/jobs"); const d = await r.json();
-  if (d.running) { await fetch("/api/jobs/" + d.running + "/cancel", { method: "POST" }); $("stage").textContent = "Cancelling after this step..."; }
+  const id = currentJob || d.latest || d.running;
+  if (id) { await fetch("/api/jobs/" + id + "/cancel", { method: "POST" }); $("stage").textContent = "Cancelling after this step..."; }
 });
 
 /* Small labels on each clip: layout, ratio, caption style, speed, extras. */
@@ -778,7 +782,7 @@ renderWmRows = function(){ _renderWmRows(); renderLogoStatus(); };
   loadWatermarks().catch(() => {});
   const items = await loadLibrary();
   const r = await fetch("/api/jobs"); const d = await r.json();
-  if (d.running) { setBusy(true); poll(d.running); }
+  if (d.latest || d.running) { setBusy(true); poll(d.latest || d.running); }
   else if (items.length) openRun(items[0].folder);
 })();
 </script>

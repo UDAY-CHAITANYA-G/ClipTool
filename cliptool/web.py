@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import queue
 import threading
 import time
 import traceback
@@ -56,6 +57,42 @@ JOBS_LOCK = threading.Lock()
 
 def _running_job() -> dict | None:
     return next((j for j in JOBS.values() if j["status"] == "running"), None)
+
+
+def _busy() -> bool:
+    """A job is running or waiting in the queue."""
+    return any(j["status"] in ("running", "queued") for j in JOBS.values())
+
+
+# Jobs run one at a time, in the order they were started: renders compete for the CPU and some
+# touch the same files, so a second job waits in this queue instead of being refused.
+JOB_QUEUE: "queue.Queue[tuple[dict, object]]" = queue.Queue()
+
+
+def _worker() -> None:
+    while True:
+        job, work = JOB_QUEUE.get()
+        try:
+            if job["cancel"]:
+                job["status"], job["stage"] = "cancelled", "Cancelled"
+                continue
+            job["status"] = "running"
+            job["stage"] = job.pop("start_stage", job["stage"])
+            _run_job(job, work)
+        finally:
+            JOB_QUEUE.task_done()
+
+
+def _enqueue(job: dict, work) -> dict:
+    ahead = sum(1 for j in JOBS.values() if j is not job and j["status"] in ("running", "queued"))
+    if ahead:
+        job["start_stage"] = job["stage"]
+        job["status"], job["stage"] = "queued", f"Waiting for {ahead} job{'s' if ahead > 1 else ''} to finish"
+    else:
+        job["status"] = "queued"
+    JOBS[job["id"]] = job
+    JOB_QUEUE.put((job, work))
+    return job
 
 
 def _run_job(job: dict, work) -> None:
@@ -253,8 +290,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_paths_payload())
             return True
         if path == "/api/paths" and method == "POST":
-            if _running_job():
-                self._error("Wait for the running job to finish before changing folders.", HTTPStatus.CONFLICT)
+            if _busy():
+                self._error("Wait for the rendering jobs to finish before changing folders.", HTTPStatus.CONFLICT)
                 return True
             try:
                 n = int(self.headers.get("Content-Length") or 0)
@@ -369,7 +406,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({k: v for k, v in job.items() if k != "cancel"})
         if path == "/api/jobs":
             running = _running_job()
-            return self._json({"running": running["id"] if running else None})
+            queued = [j["id"] for j in JOBS.values() if j["status"] == "queued"]
+            latest = queued[-1] if queued else (running["id"] if running else None)
+            return self._json({"running": running["id"] if running else None, "queued": queued, "latest": latest})
         if path == "/api/presets":
             return self._json({"presets": render.PRESETS, "preset_groups": render.PRESET_GROUPS, "positions": render.POSITIONS,
                                "filters": render.FILTER_PRESETS, "filter_limits": render.FILTER_LIMITS,
@@ -526,13 +565,9 @@ class Handler(BaseHTTPRequestHandler):
             fit = body.get("fit", "auto")
             if aspect not in render.SIZES or fit not in render.FITS:
                 return self._error("bad aspect or framing")
-            with JOBS_LOCK:
-                if _running_job():
-                    return self._error("A job is already running; wait for it or cancel it.", HTTPStatus.CONFLICT)
-                jid = uuid.uuid4().hex[:12]
-                job = {"id": jid, "url": url, "status": "running", "stage": "Starting", "progress": 0.0,
-                       "log": [], "result": None, "error": None, "cancel": False}
-                JOBS[jid] = job
+            jid = uuid.uuid4().hex[:12]
+            job = {"id": jid, "url": url, "status": "queued", "stage": "Starting", "progress": 0.0,
+                   "log": [], "result": None, "error": None, "cancel": False}
             style = body.get("style", "highlight")
             if style not in render.PRESETS:
                 style = "highlight"
@@ -546,8 +581,9 @@ class Handler(BaseHTTPRequestHandler):
                 res = pipeline.run(opts, log=log, stage=stage, cancelled=cancelled)
                 return {"folder": res["out_dir"].name, "title": res["info"]["title"], "clips": res["clips"]}
 
-            threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
-            return self._json({"id": jid}, HTTPStatus.ACCEPTED)
+            with JOBS_LOCK:
+                _enqueue(job, work)
+            return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/edit", path)
         if m:
             run = _run_dir(m.group(1))
@@ -563,20 +599,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(str(e), HTTPStatus.GONE)
             except (ValueError, TypeError, KeyError) as e:
                 return self._error(str(e) or "invalid edit")
-            with JOBS_LOCK:
-                if _running_job():
-                    return self._error("A job is already running; wait for it or cancel it.", HTTPStatus.CONFLICT)
-                jid = uuid.uuid4().hex[:12]
-                job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank, "status": "running",
-                       "stage": f"Re-rendering clip #{rank}", "progress": 0.05, "log": [], "result": None,
-                       "error": None, "cancel": False}
-                JOBS[jid] = job
+            jid = uuid.uuid4().hex[:12]
+            job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank, "status": "queued",
+                   "stage": f"Re-rendering clip #{rank}", "progress": 0.05, "log": [], "result": None,
+                   "error": None, "cancel": False}
 
             def work(log, stage, cancelled):
                 return pipeline.edit_clip(run, rank, changes, log=log, stage=stage)
 
-            threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
-            return self._json({"id": jid}, HTTPStatus.ACCEPTED)
+            with JOBS_LOCK:
+                _enqueue(job, work)
+            return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/jobs/([a-f0-9]+)/cancel", path)
         if m:
             job = JOBS.get(m.group(1))
@@ -591,8 +624,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = unquote(urlparse(self.path).path)
         with JOBS_LOCK:
-            if _running_job():
-                return self._error("A job is running; wait for it to finish or cancel it first.", HTTPStatus.CONFLICT)
+            if _busy():
+                return self._error("Videos are rendering; wait for them to finish or cancel them first.", HTTPStatus.CONFLICT)
             try:
                 if path == "/api/library":
                     return self._json(_clear_all())
@@ -624,6 +657,7 @@ def _open_folder(p: Path) -> None:
 
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
     refresh_paths()
+    threading.Thread(target=_worker, daemon=True, name="cliptool-jobs").start()
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
     print(f"ClipTool is running at {url}  (Ctrl+C to stop)", flush=True)

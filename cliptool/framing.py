@@ -198,3 +198,57 @@ def pan_commands(source: Path, path: list[tuple[float, float]], dur: float, fps:
             lines.append(f"{t:.3f} crop@pan x {x};")
             last = x
     return "\n".join(lines) + "\n"
+
+
+STACK_ASPECT = 1080 / 840  # width / height of the facecam band in the stacked layout
+
+
+def detect_facecam(source: Path, start: float, dur: float, samples: int = 10) -> dict | None:
+    """Find a streamer's facecam: a small face that stays in one spot across the clip.
+
+    Returns a normalised source rectangle {x, y, w, h} framing the camera (shaped for the
+    1080x840 band on top of the stacked layout), or None when no steady small face is found.
+    """
+    import cv2
+
+    W, H = video_size(str(source))
+    width = 960  # detect at half of 1080p: small facecam faces still resolve
+    h = int(round(width * H / W / 2) * 2)
+    step = max(dur / samples, 0.5)
+    det = _detector()
+    hits = []
+    for k in range(samples):
+        t = start + 0.3 + k * step
+        if t > start + dur:
+            break
+        proc = subprocess.run(
+            [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(source),
+             "-frames:v", "1", "-vf", f"scale={width}:{h},format=gray", "-f", "rawvideo", "-"],
+            capture_output=True)
+        if len(proc.stdout) < width * h:
+            continue
+        frame = np.frombuffer(proc.stdout[: width * h], dtype=np.uint8).reshape(h, width)
+        faces = det.detectMultiScale(frame, scaleFactor=1.1, minNeighbors=6, minSize=(16, 16),
+                                     maxSize=(int(width * 0.16), int(width * 0.16)))
+        for (x, y, fw, fh) in faces:
+            hits.append(((x + fw / 2) / width, (y + fh / 2) / h, fw / width))
+    if len(hits) < 3:
+        return None
+    arr = np.array(hits)
+    # The facecam is the position seen most often.
+    best, best_n = None, 0
+    for cx, cy, _ in arr:
+        n = int(np.sum((np.abs(arr[:, 0] - cx) < 0.04) & (np.abs(arr[:, 1] - cy) < 0.05)))
+        if n > best_n:
+            best, best_n = (cx, cy), n
+    if best_n < max(3, 0.4 * samples):
+        return None
+    near = arr[(np.abs(arr[:, 0] - best[0]) < 0.04) & (np.abs(arr[:, 1] - best[1]) < 0.05)]
+    cx, cy, fw = (float(np.median(near[:, 0])), float(np.median(near[:, 1])), float(np.median(near[:, 2])))
+    # Camera box ~3 face-widths wide, shaped for the band; face sits a little above centre.
+    w_px = fw * W * 3.0
+    h_px = w_px / STACK_ASPECT
+    w_n, h_n = min(1.0, w_px / W), min(1.0, h_px / H)
+    x_n = min(max(0.0, cx - w_n / 2), 1 - w_n)
+    y_n = min(max(0.0, cy - h_n * 0.42), 1 - h_n)
+    return {"x": round(x_n, 4), "y": round(y_n, 4), "w": round(w_n, 4), "h": round(h_n, 4)}

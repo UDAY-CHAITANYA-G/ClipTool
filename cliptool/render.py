@@ -48,6 +48,10 @@ PRESETS: dict[str, dict] = {
                   "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 5, "outline": 2, "mode": "plain"},
     "subtitle":  {"label": "Classic subtitle", "font": "Arial", "size": 56, "color": "#FFFFFF",
                   "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 7, "outline": 0, "mode": "band"},
+    # GTA-themed: Vice City sunset - hot pink text, orange active word, deep purple outline, bold italic.
+    "vice":      {"label": "Vice City (GTA)", "font": "Impact", "size": 92, "color": "#FF4FA3",
+                  "highlight": "#FFB23F", "uppercase": True, "words_per_line": 2, "outline": 6, "mode": "color",
+                  "italic": True, "outline_color": "#2B0B45", "shadow_color": "#7A1FA2"},
 }
 POSITIONS = ("bottom", "middle", "top")
 
@@ -87,7 +91,10 @@ def build_ass(words: list[dict], clip_start: float, clip_end: float, size: tuple
         border_style, back, outline, shadow = 3, "&H60000000", 14, 0  # translucent box behind each line
     if mode == "glow":
         shadow = 0
-    out_col = _ass_color(cap["highlight"]) if mode == "glow" else "&H00000000"
+    out_col = _ass_color(cap["highlight"]) if mode == "glow" else _ass_color(cap.get("outline_color", "#000000"))
+    if cap.get("shadow_color"):
+        back, shadow = _ass_color(cap["shadow_color"]), 6  # solid offset shadow (Vice City look)
+    italic = -1 if cap.get("italic") else 0
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -97,7 +104,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,0,0,0,100,100,0,0,{border_style},{outline},{shadow},{align},70,70,{margin_v},1
+Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,{italic},0,0,100,100,0,0,{border_style},{outline},{shadow},{align},70,70,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -168,24 +175,84 @@ def align_text(words: list[dict], text: str) -> list[dict]:
     return out
 
 
-def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None) -> str:
+FITS = ("auto", "crop", "blur", "black", "stack")
+
+# Look presets for the editor's filter panel (values match the sliders).
+FILTER_PRESETS: dict[str, dict] = {
+    "none":      {"label": "None", "brightness": 0, "contrast": 1, "saturation": 1, "warmth": 0, "sharpen": 0, "vignette": False},
+    "vivid":     {"label": "Vivid", "brightness": 0.02, "contrast": 1.12, "saturation": 1.4, "warmth": 0, "sharpen": 0.6, "vignette": False},
+    "cinematic": {"label": "Cinematic", "brightness": -0.03, "contrast": 1.18, "saturation": 0.85, "warmth": 0.25, "sharpen": 0.3, "vignette": True},
+    "warm":      {"label": "Warm", "brightness": 0.02, "contrast": 1.05, "saturation": 1.1, "warmth": 0.5, "sharpen": 0, "vignette": False},
+    "cool":      {"label": "Cool", "brightness": 0, "contrast": 1.05, "saturation": 1.0, "warmth": -0.5, "sharpen": 0, "vignette": False},
+    "bw":        {"label": "Black & white", "brightness": 0, "contrast": 1.2, "saturation": 0, "warmth": 0, "sharpen": 0.3, "vignette": True},
+    "vice":      {"label": "Vice sunset", "brightness": 0.03, "contrast": 1.1, "saturation": 1.35, "warmth": 0.35, "sharpen": 0.4, "vignette": True},
+}
+FILTER_LIMITS = {"brightness": (-0.3, 0.3), "contrast": (0.5, 1.8), "saturation": (0.0, 2.5),
+                 "warmth": (-1.0, 1.0), "sharpen": (0.0, 1.5)}
+
+# Top-right corner, the most common facecam spot; the editor lets you move it.
+DEFAULT_FACECAM = {"x": 0.70, "y": 0.04, "w": 0.28, "h": 0.30}
+
+
+def filter_chain(f: dict | None) -> str:
+    """ffmpeg filters for the look sliders; '' when everything is neutral."""
+    if not f:
+        return ""
+    parts = []
+    b, c, s = float(f.get("brightness", 0)), float(f.get("contrast", 1)), float(f.get("saturation", 1))
+    if abs(b) > 1e-3 or abs(c - 1) > 1e-3 or abs(s - 1) > 1e-3:
+        parts.append(f"eq=brightness={b:.3f}:contrast={c:.3f}:saturation={s:.3f}")
+    w = float(f.get("warmth", 0))
+    if abs(w) > 1e-3:
+        parts.append(f"colorbalance=rs={0.12 * w:.3f}:gs={0.02 * w:.3f}:bs={-0.12 * w:.3f}"
+                     f":rm={0.08 * w:.3f}:bm={-0.08 * w:.3f}")
+    sh = float(f.get("sharpen", 0))
+    if sh > 1e-3:
+        parts.append(f"unsharp=5:5:{sh:.2f}:5:5:0")
+    if f.get("vignette"):
+        parts.append("vignette=angle=PI/4.5")
+    return ",".join(parts)
+
+
+def _layout(aspect: str, fit: str, x: int | None, source: Path | None, clip: dict) -> str:
+    """Filtergraph from [0:v] to [base]: the frame laid out at the output size, before look and captions."""
     W, H = SIZES[aspect]
+    if aspect == "vertical" and fit == "stack" and source is not None:
+        from .framing import video_size
+
+        sw, sh = video_size(str(source))
+        fc = clip.get("facecam") or DEFAULT_FACECAM
+        game_h = W  # 1:1 game area at the bottom
+        top = H - game_h  # facecam band on top
+        scaled_w = int(round(sw * game_h / sh / 2) * 2)
+        gx = max(0, min(scaled_w - W, int(float(clip.get("game_x", 0.5)) * scaled_w - W / 2)))
+        return (f"[0:v]split=2[cam][game];"
+                f"[cam]crop=iw*{fc['w']:.4f}:ih*{fc['h']:.4f}:iw*{fc['x']:.4f}:ih*{fc['y']:.4f},"
+                f"scale={W}:{top}:force_original_aspect_ratio=increase,crop={W}:{top}[top];"
+                f"[game]scale=-2:{game_h},crop={W}:{game_h}:{gx}:0[bot];"
+                f"[top][bot]vstack=2,setsar=1[base]")
     if aspect == "vertical" and fit == "pan":
         # pan.cmd (written next to the clip) moves the crop window frame by frame.
-        chain = f"[0:v]scale=-2:{H},sendcmd=f=pan.cmd,crop@pan={W}:{H}:{x or 0}:0,setsar=1"
-    elif aspect == "vertical" and fit == "crop" and x is not None:
-        chain = f"[0:v]scale=-2:{H},crop={W}:{H}:{x}:0,setsar=1"
-    elif aspect == "original":
-        chain = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1"
-    elif fit == "blur":
-        chain = (f"[0:v]split=2[a][b];"
-                 f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=25:3,eq=brightness=-0.08[bg];"
-                 f"[b]scale={W}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
-    else:
-        chain = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
-    if captions:
-        chain += ",ass=subs.ass"
-    return chain + "[v]"
+        return f"[0:v]scale=-2:{H},sendcmd=f=pan.cmd,crop@pan={W}:{H}:{x or 0}:0,setsar=1[base]"
+    if aspect == "vertical" and fit == "crop" and x is not None:
+        return f"[0:v]scale=-2:{H},crop={W}:{H}:{x}:0,setsar=1[base]"
+    if aspect == "original":
+        return f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1[base]"
+    if fit == "black":
+        return (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[base]")
+    if fit in ("blur", "stack"):
+        return (f"[0:v]split=2[a][b];"
+                f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=25:3,eq=brightness=-0.08[bg];"
+                f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]")
+    return f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[base]"
+
+
+def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None,
+                  source: Path | None = None, clip: dict | None = None) -> str:
+    graph = _layout(aspect, fit, x, source, clip or {})
+    tail = [p for p in (filter_chain((clip or {}).get("filters")), "ass=subs.ass" if captions else "") if p]
+    return graph + ";[base]" + (",".join(tail) if tail else "null") + "[v]"
 
 
 def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, rank: int,
@@ -209,6 +276,16 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
 
     x = None
     used_fit = fit
+    if aspect != "vertical" and fit == "stack":
+        used_fit = "blur"
+    if aspect == "vertical" and fit == "stack" and not clip.get("facecam"):
+        from .framing import detect_facecam
+
+        found = detect_facecam(source, start, dur)
+        if found:
+            clip["facecam"] = found
+        else:
+            used_fit = "blur"  # no facecam to put on top: keep the full frame instead
     if aspect == "vertical" and fit == "auto":
         from .framing import choose_framing, crop_x, pan_commands
 
@@ -219,11 +296,15 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         elif used_fit == "pan":
             (clips_dir / "pan.cmd").write_text(pan_commands(source, plan["path"], dur), encoding="utf-8")
             x = crop_x(source, plan["path"][0][1])
+    elif aspect == "vertical" and fit == "crop":
+        from .framing import crop_x
+
+        x = crop_x(source, float(clip.get("crop_x", 0.5)))
 
     enc = cfg["encode"]
     ffmpeg_run([
         "-ss", f"{start:.3f}", "-i", str(source.resolve()), "-t", f"{dur:.3f}",
-        "-filter_complex", _video_filter(aspect, used_fit, captions, x),
+        "-filter_complex", _video_filter(aspect, used_fit, captions, x, source, clip),
         "-map", "[v]", "-map", "0:a:0?",
         "-af", f"loudnorm=I={enc['loudness_lufs']}:TP=-1.5:LRA=11,aresample=48000",
         "-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p",
@@ -235,4 +316,4 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     (clips_dir / "subs.ass").unlink(missing_ok=True)
     (clips_dir / "pan.cmd").unlink(missing_ok=True)
     return {"file": f"clips/{mp4.name}", "thumbnail": f"clips/{jpg.name}",
-            "framing": used_fit if aspect == "vertical" else aspect}
+            "framing": used_fit if aspect == "vertical" else aspect, "facecam": clip.get("facecam")}

@@ -179,9 +179,33 @@ def clean_changes(changes: dict, duration: float) -> dict:
             raise ValueError("Unknown format.")
         out["aspect"] = changes["aspect"]
     if "fit" in changes:
-        if changes["fit"] not in ("auto", "crop", "blur"):
-            raise ValueError("Unknown framing.")
+        if changes["fit"] not in render.FITS:
+            raise ValueError("Unknown layout.")
         out["fit"] = changes["fit"]
+    if "facecam" in changes:
+        fc = changes["facecam"]
+        if fc is None:
+            out["facecam"] = None
+        else:
+            try:
+                fc = {k: float(fc[k]) for k in ("x", "y", "w", "h")}
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Facecam box needs x, y, w, h.") from None
+            if not (0 <= fc["x"] < 1 and 0 <= fc["y"] < 1 and 0.02 <= fc["w"] <= 1 and 0.02 <= fc["h"] <= 1
+                    and fc["x"] + fc["w"] <= 1.001 and fc["y"] + fc["h"] <= 1.001):
+                raise ValueError("Facecam box must be inside the video.")
+            out["facecam"] = {k: round(v, 4) for k, v in fc.items()}
+    for key in ("game_x", "crop_x"):
+        if key in changes:
+            out[key] = round(min(1.0, max(0.0, float(changes[key]))), 4)
+    if "filters" in changes:
+        f = changes["filters"] or {}
+        clean = {}
+        for k, (lo, hi) in render.FILTER_LIMITS.items():
+            if k in f:
+                clean[k] = round(min(hi, max(lo, float(f[k]))), 3)
+        clean["vignette"] = bool(f.get("vignette"))
+        out["filters"] = clean
     if "style" in changes:
         st = {k: v for k, v in (changes["style"] or {}).items() if k in EDITABLE_STYLE}
         if st.get("preset") not in render.PRESETS:

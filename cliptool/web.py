@@ -223,7 +223,24 @@ class Handler(BaseHTTPRequestHandler):
             running = _running_job()
             return self._json({"running": running["id"] if running else None})
         if path == "/api/presets":
-            return self._json({"presets": render.PRESETS, "positions": render.POSITIONS})
+            return self._json({"presets": render.PRESETS, "positions": render.POSITIONS,
+                               "filters": render.FILTER_PRESETS, "filter_limits": render.FILTER_LIMITS,
+                               "default_facecam": render.DEFAULT_FACECAM})
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/facecam", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                data, info, sentences, source = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from .framing import detect_facecam
+
+            return self._json({"facecam": detect_facecam(source, clip["start"], clip["end"] - clip["start"])})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/words", path)
         if m:
             run = _run_dir(m.group(1))
@@ -280,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error("Use 1-20 clips and a length range between 5 and 180 seconds (min < max).")
             aspect = body.get("aspect", "vertical")
             fit = body.get("fit", "auto")
-            if aspect not in ("vertical", "square", "original") or fit not in ("auto", "crop", "blur"):
+            if aspect not in ("vertical", "square", "original") or fit not in render.FITS:
                 return self._error("bad aspect or framing")
             with JOBS_LOCK:
                 if _running_job():

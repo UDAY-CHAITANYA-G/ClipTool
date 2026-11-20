@@ -18,15 +18,15 @@ from . import __version__
 from .config import load_config
 
 SUBCOMMANDS = {"render", "doctor", "clean", "run", "serve"}
-FITS = ["auto", "crop", "blur"]
+FITS = ["auto", "crop", "blur", "black", "stack"]
 
 
 def _add_render_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--aspect", choices=["vertical", "square", "original"], default="vertical",
                    help="vertical 9:16 (default), square 1:1 or original 16:9")
     p.add_argument("--fit", choices=FITS, default="auto",
-                   help="vertical framing: auto (follow the speaker's face, else blur; default), "
-                        "crop (centre) or blur (full frame on blurred background)")
+                   help="vertical layout: auto (follow the action; default), crop (centre), blur / black "
+                        "(full 16:9 frame on a blurred / black background) or stack (facecam on top, 1:1 game below)")
     p.add_argument("--captions", action=argparse.BooleanOptionalAction, default=True,
                    help="burn word-timed captions (default on)")
     p.add_argument("--config", type=Path, help="path to config.toml")
@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--ai", action="store_true",
                    help="optional: also ask Claude to rank and title clips (needs an Anthropic API key)")
     r.add_argument("--model", help="Claude model when --ai is used (default claude-opus-5-5)")
+    r.add_argument("--style", default="highlight", help="caption style: highlight, box, single, neon, minimal, subtitle, vice")
     r.add_argument("--lang", default="en", help="caption/transcription language (default en)")
     r.add_argument("--whisper", action="store_true", help="force local transcription with faster-whisper")
     r.add_argument("--whisper-model", default="small", help="faster-whisper model size (default small)")
@@ -77,7 +78,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
     o = pipeline.Options(
         url=a.url, count=a.count, min_s=a.min_s, max_s=a.max_s, aspect=a.aspect, fit=a.fit,
-        captions=a.captions, ai=a.ai, model=a.model, lang=a.lang, whisper=a.whisper,
+        captions=a.captions, caption_style=a.style, ai=a.ai, model=a.model, lang=a.lang, whisper=a.whisper,
         whisper_model=a.whisper_model, dry_run=a.dry_run, out=a.out, work=a.work,
         cookies_from_browser=a.cookies_from_browser, config=a.config)
     res = pipeline.run(o, log=lambda m: print(m, flush=True))

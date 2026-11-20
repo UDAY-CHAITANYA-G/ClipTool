@@ -38,6 +38,10 @@ def clip_records(info: dict, clips: list[dict], sentences: list[dict]) -> list[d
             "aspect": c.get("aspect"),
             "fit": c.get("fit"),
             "captions": c.get("captions", True),
+            "facecam": c.get("facecam"),
+            "game_x": c.get("game_x"),
+            "crop_x": c.get("crop_x"),
+            "filters": c.get("filters"),
             "edited": bool(c.get("edited")),
             "i": c["i"], "j": c["j"],
         })

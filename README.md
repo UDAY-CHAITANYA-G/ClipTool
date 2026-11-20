@@ -34,7 +34,14 @@ The site is only reachable from this computer.
 - pick a text style: **Bold highlight**, **Word box**, **One word pop**, **Neon glow**, **Minimal** or
   **Classic subtitle**;
 - set the caption position (top/middle/bottom), size, colours, words per line and UPPERCASE, or turn captions off;
-- switch the format (9:16, 1:1, 16:9) and framing.
+- switch the format (9:16, 1:1, 16:9) and pick a **template**:
+  - **Auto** follows the action;
+  - **Crop to fill**, with a draggable visible area;
+  - **Full 16:9 + blur** or **Full 16:9 + black** puts the whole frame inside 9:16;
+  - **Facecam top + 1:1 game**: the facecam is auto-detected, and you can drag or resize its box and slide the game area;
+- adjust **filters**: brightness, contrast, saturation, warmth, sharpen and vignette, or presets (Vivid,
+  Cinematic, Warm, Cool, Black & white, Vice sunset);
+- use the GTA-themed **Vice City** caption style (pink and orange, bold italic, purple outline).
 
 **Save & re-render** rebuilds only that clip (about 30 s). The text style for new runs is set on the main form.
 
@@ -46,7 +53,7 @@ its downloaded video). **Clear all** removes every run and every downloaded vide
 ```powershell
 cliptool "https://www.youtube.com/watch?v=VIDEO_ID"                  # 5 vertical clips, captions
 cliptool "https://youtu.be/VIDEO_ID" --count 8 --min 30 --max 90
-cliptool "https://youtu.be/VIDEO_ID" --fit blur                      # always show the full frame
+cliptool "https://youtu.be/VIDEO_ID" --fit stack --style vice         # facecam on top, game below, GTA captions
 cliptool "https://youtu.be/VIDEO_ID" --dry-run                       # list clips, no rendering
 cliptool render output\<folder> --aspect square                      # re-render a previous run
 cliptool clean                                                       # delete downloaded videos (work\)

@@ -74,6 +74,13 @@
             <button type="button" data-act="back5" title="Back 2 s (Shift+←)">−2s</button>
             <button type="button" class="play primary" data-act="play" title="Play / pause (Space)">▶ Play</button>
             <button type="button" data-act="fwd5" title="Forward 2 s (Shift+→)">+2s</button>
+            <div class="spd" role="group" aria-label="Clip speed">
+              <button type="button" data-act="spdstep" data-v="-1" title="Slower" aria-label="Slower">−</button>
+              <select id="ws-speed" aria-label="Clip speed" title="Speed of the final clip (captions stay in sync)">
+                ${[0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map(v => `<option value="${v}">${v}×</option>`).join("")}
+              </select>
+              <button type="button" data-act="spdstep" data-v="1" title="Faster" aria-label="Faster">+</button>
+            </div>
             <span class="tc" id="ws-tc">0.0 / 0.0 s</span>
           </div>
           <p class="ws-hint" id="ws-hint">Drag text on the preview to move it. Space plays, Ctrl+Z undoes.</p>
@@ -321,6 +328,9 @@
     if (!X.open) return;
     sizeFrame(); drawFrame(); drawImages(); drawCaptions(); drawTexts(); drawExtras(); renderTimeline(); drawSource();
     el("ws-title").value = S.title;
+    const sp = el("ws-speed");
+    if (![...sp.options].some(o => +o.value === S.speed)) sp.add(new Option(S.speed + "×", S.speed));
+    sp.value = String(S.speed);
     document.querySelector('#ws [data-act="undo"]').disabled = !hist.length;
     document.querySelector('#ws [data-act="redo"]').disabled = !fut.length;
   }
@@ -633,6 +643,12 @@
       if (h.end - h.start < 1) h[k === "start" ? "start" : "end"] = k === "start" ? h.end - 1 : h.start + 1;
       h.text = X.words.filter(w => w.s >= h.start - 0.05 && w.s < h.end).map(w => w.w).join(" ");
     }),
+    spdstep: v => {
+      const steps = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+      const i = steps.findIndex(s => s >= S.speed - 1e-6);
+      const next = steps[Math.min(steps.length - 1, Math.max(0, (i < 0 ? steps.length - 1 : i) + +v))];
+      mutate("speed", () => { S.speed = next; video().playbackRate = next; });
+    },
     speed: v => mutate("speed", () => { S.speed = +v; video().playbackRate = S.speed; }),
     addtext: v => {
       const p = TEXT_PRESETS[v], D = outDur(), t0 = clamp(tOut(), 0, D - 0.5);
@@ -769,6 +785,7 @@
     });
     ws.addEventListener("change", e => { if (e.target.closest("[data-num]") || e.target.closest("select,[type=checkbox]")) onBind(e); });
     el("ws-title").addEventListener("input", e => mutate("title", () => { S.title = e.target.value; }, { panel: false }));
+    el("ws-speed").addEventListener("change", e => mutate("speed", () => { S.speed = +e.target.value; video().playbackRate = S.speed; }));
 
     v.addEventListener("loadeddata", () => { refresh(); renderPanel(); });
     v.addEventListener("seeked", refresh);

@@ -239,6 +239,11 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
               <option value="phone">Phone Text</option><option value="ocean">Ocean Drive</option>
             </optgroup>
           </select></label>
+        <label>Speed
+          <select id="speed" title="Playback speed of the clips - captions stay in sync">
+            <option value="0.75">0.75× slower</option><option value="0.9">0.9×</option><option value="1" selected>1× normal</option>
+            <option value="1.1">1.1×</option><option value="1.25">1.25× faster</option><option value="1.5">1.5×</option><option value="2">2×</option>
+          </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
         <label class="check" title="Each clip starts with its most gripping 3-5 seconds, then plays from the beginning"><input id="hookintro" type="checkbox"> Hook intro</label>
       </div>
@@ -367,7 +372,7 @@ async function poll(id){
 $("f").addEventListener("submit", async e => {
   e.preventDefault(); $("msg").textContent = "";
   const body = { url: $("url").value.trim(), count: +$("count").value, min: +$("min").value, max: +$("max").value,
-                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked };
+                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked, speed: +$("speed").value };
   if (body.min >= body.max) { $("msg").textContent = "Min length must be smaller than max length."; return; }
   setBusy(true);
   const r = await fetch("/api/jobs", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });

@@ -24,6 +24,7 @@ class Options:
     captions: bool = True
     caption_style: str = "highlight"
     hook_intro: bool = False          # play the best 3-5 s of each clip first, then the clip
+    speed: float = 1.0                # 0.5-2x playback speed for every clip (captions stay in sync)
     ai: bool = False
     model: str | None = None
     lang: str = "en"
@@ -116,8 +117,11 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
             log(f"  adding {len(default_imgs)} default logo(s) to every clip")
         if o.hook_intro:
             log("  finding a 3-5 s hook for each clip")
+        speed = min(2.0, max(0.5, float(o.speed or 1.0)))
         for c in clips:
             c["style"] = {"preset": o.caption_style}
+            if abs(speed - 1.0) > 1e-3:
+                c["speed"] = speed
             if o.hook_intro:
                 h = signals.find_hook(c, sentences, info, source, tr.get("cues"))
                 if h:

@@ -513,6 +513,7 @@ class Handler(BaseHTTPRequestHandler):
             opts = pipeline.Options(url=url, count=count, min_s=min_s, max_s=max_s, aspect=aspect, fit=fit,
                                     captions=bool(body.get("captions", True)), caption_style=style,
                                     hook_intro=bool(body.get("hook_intro")),
+                                    speed=min(2.0, max(0.5, float(body.get("speed") or 1.0))),
                                     out=OUTPUT, work=WORK)
 
             def work(log, stage, cancelled):

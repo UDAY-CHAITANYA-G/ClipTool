@@ -42,6 +42,10 @@
 .ws-frame .seam{position:absolute;left:0;right:0;height:0;border-top:1px dashed rgba(255,255,255,.5);pointer-events:none}
 .ws-transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .ws-transport .play{min-width:110px;font-weight:600}
+.ws-transport .spd{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ws-transport .spd button{border:none;border-radius:0;width:30px;padding:6px 0;font-weight:700}
+.ws-transport .spd select{font:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--bg);border:none;
+  border-left:1px solid var(--line);border-right:1px solid var(--line);padding:6px 4px}
 .ws-transport .tc{font-variant-numeric:tabular-nums;color:var(--quiet);font-size:13px;min-width:120px;text-align:center}
 .ws-hint{font-size:12px;color:var(--quiet);text-align:center;max-width:520px;margin:0}
 .ws-panel{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:16px 16px 40px}

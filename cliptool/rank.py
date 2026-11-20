@@ -34,7 +34,7 @@ LEAD_FILLER = re.compile(
 
 def clean_line(text: str, limit: int) -> str:
     """Strip leading filler, tidy punctuation, cut at a word boundary within `limit` chars."""
-    t = re.sub(r"\s+", " ", text).strip()
+    t = re.sub(r"\s+", " ", text.replace(">>", " ")).strip()
     t = LEAD_FILLER.sub("", t).strip(" ,;:-")
     t = re.sub(r"\s+([,.?!])", r"\1", t)
     if len(t) > limit:

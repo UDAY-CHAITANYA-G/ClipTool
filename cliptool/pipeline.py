@@ -1,6 +1,7 @@
 """The full link -> clips pipeline, shared by the CLI and the local website."""
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ class Options:
     aspect: str = "vertical"
     fit: str = "auto"
     captions: bool = True
+    caption_style: str = "highlight"
     ai: bool = False
     model: str | None = None
     lang: str = "en"
@@ -106,6 +108,9 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
         import shutil
 
         shutil.rmtree(out_dir / "clips", ignore_errors=True)  # drop clips from an earlier run
+        for c in clips:
+            c["style"] = {"preset": o.caption_style}
+            c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
         for k, c in enumerate(clips, 1):
             at(f"Rendering clip {k} of {len(clips)}", 0.55 + 0.43 * (k - 1) / len(clips))
             log(f"  {c['title']}")
@@ -122,3 +127,119 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
         stage("Done", 1.0)
     return {"out_dir": out_dir, "page": page, "clips": recs, "info": info,
             "seconds": round(time.time() - t0, 1), "settings": settings}
+
+
+# ---- editing one clip -------------------------------------------------------
+
+EDITABLE_STYLE = {"preset", "position", "scale", "color", "highlight", "font", "uppercase", "words_per_line"}
+
+
+def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
+    """clips.json, video info, transcript sentences and source video of a run."""
+    import json
+
+    from .cache import Work
+
+    data = json.loads((run_dir / "clips.json").read_text(encoding="utf-8"))
+    work_dir = Path(data["settings"]["work_dir"])
+    work = Work(work_dir.parent, work_dir.name)
+    source = next((p for p in work.dir.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm")), None)
+    if not source:
+        raise FileNotFoundError("The downloaded video for this run is gone (cleared?). Run the link again to edit.")
+    info = work.load("info.json")
+    sentences = work.load("transcript.json")["sentences"]
+    return data, info, sentences, source
+
+
+def clean_changes(changes: dict, duration: float) -> dict:
+    """Validate an edit request from the website. Raises ValueError with a readable message."""
+    out: dict = {}
+    if "start" in changes or "end" in changes:
+        start, end = float(changes["start"]), float(changes["end"])
+        if start < 0 or (duration and end > duration + 0.5):
+            raise ValueError("Start and end must be inside the video.")
+        if end - start < 1.0:
+            raise ValueError("A clip must be at least 1 second long.")
+        if end - start > 180:
+            raise ValueError("A clip can be at most 180 seconds long.")
+        out["start"], out["end"] = round(start, 3), round(end, 3)
+    for key, limit in (("title", 100), ("hook", 140)):
+        if key in changes:
+            val = str(changes[key]).strip()
+            if not val:
+                raise ValueError(f"The {key} can't be empty.")
+            out[key] = val[:limit]
+    if "caption_text" in changes:
+        val = str(changes["caption_text"] or "").strip()
+        out["caption_text"] = val or None
+    if "captions" in changes:
+        out["captions"] = bool(changes["captions"])
+    if "aspect" in changes:
+        if changes["aspect"] not in render.SIZES:
+            raise ValueError("Unknown format.")
+        out["aspect"] = changes["aspect"]
+    if "fit" in changes:
+        if changes["fit"] not in ("auto", "crop", "blur"):
+            raise ValueError("Unknown framing.")
+        out["fit"] = changes["fit"]
+    if "style" in changes:
+        st = {k: v for k, v in (changes["style"] or {}).items() if k in EDITABLE_STYLE}
+        if st.get("preset") not in render.PRESETS:
+            raise ValueError("Unknown caption style.")
+        if "position" in st and st["position"] not in render.POSITIONS:
+            raise ValueError("Unknown caption position.")
+        for col in ("color", "highlight"):
+            if col in st and not re.fullmatch(r"#[0-9A-Fa-f]{6}", str(st[col])):
+                raise ValueError("Colours must look like #RRGGBB.")
+        if "scale" in st:
+            st["scale"] = min(1.8, max(0.5, float(st["scale"])))
+        if "words_per_line" in st:
+            st["words_per_line"] = min(8, max(1, int(st["words_per_line"])))
+        if "uppercase" in st:
+            st["uppercase"] = bool(st["uppercase"])
+        if "font" in st:
+            st["font"] = re.sub(r"[^A-Za-z0-9 \-]", "", str(st["font"]))[:40] or None
+        out["style"] = st
+    return out
+
+
+def edit_clip(run_dir: Path, rank: int, changes: dict, log: Callable[[str], None] = print,
+              stage: Callable[[str, float], None] | None = None) -> dict:
+    """Apply edits to one clip of a run and re-render just that clip."""
+    import json
+
+    data, info, sentences, source = load_run(run_dir)
+    clips = data["clips"]
+    clip = next((c for c in clips if c["rank"] == rank), None)
+    if not clip:
+        raise ValueError(f"Clip #{rank} not found.")
+    ch = clean_changes(changes, info.get("duration") or 0)
+    clip.update(ch)
+    # Keep the sentence span in step with the (possibly trimmed) times.
+    idx = [k for k, s in enumerate(sentences) if s["end"] > clip["start"] and s["start"] < clip["end"]]
+    if idx:
+        clip["i"], clip["j"] = idx[0], idx[-1]
+    clip["edited"] = True
+
+    settings = data["settings"]
+    aspect = clip.get("aspect") or settings.get("aspect", "vertical")
+    fit = clip.get("fit") or settings.get("fit", "auto")
+    captions = clip.get("captions", settings.get("captions", True))
+    cfg = load_config(None)
+
+    if stage:
+        stage(f"Re-rendering clip #{rank}", 0.2)
+    log(f"Re-rendering #{rank}: {clip['title']} ({clip['start']:.1f}-{clip['end']:.1f}s, {aspect}, {fit})")
+    clips_dir = run_dir / "clips"
+    for old in list(clips_dir.glob(f"{rank:02d}_*")):
+        old.unlink()
+    clip.update(render.render_clip(source, clip, sentences, run_dir, rank, aspect, fit, captions, cfg))
+    clip["aspect"], clip["fit"], clip["captions"] = aspect, fit, captions
+
+    recs = report.clip_records(info, clips, sentences)
+    report.write_json(run_dir, info, recs, settings)
+    report.write_html(run_dir, info, recs)
+    if stage:
+        stage("Done", 1.0)
+    log("Done.")
+    return {"folder": run_dir.name, "rank": rank, "clip": next(r for r in recs if r["rank"] == rank)}

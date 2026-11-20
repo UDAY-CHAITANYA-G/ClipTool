@@ -90,3 +90,29 @@ def test_pan_commands_format(tmp_path, monkeypatch):
     first, last = cmd.splitlines()[0], cmd.splitlines()[-1]
     assert first.startswith("0.000 crop@pan x ") and first.endswith(";")
     assert int(last.split()[-1].rstrip(";")) > int(first.split()[-1].rstrip(";"))
+
+
+def test_caption_presets_render_and_edit_alignment():
+    from cliptool.render import PRESETS, align_text, caption_style
+
+    words = [{"w": "hello", "s": 1.0, "e": 1.4}, {"w": "world", "s": 1.5, "e": 2.0}]
+    for name in PRESETS:
+        st = caption_style(DEFAULTS["captions"], {"preset": name, "position": "top"})
+        ass = build_ass(words, 0.5, 3.0, (1080, 1920), st, "vertical")
+        assert "Dialogue:" in ass and ",8,70,70,300," in ass  # top alignment + margin
+    same = align_text(words, "Hello World!")
+    assert [w["w"] for w in same] == ["Hello", "World!"] and same[1]["s"] == 1.5
+    more = align_text(words, "hello there big world")
+    assert len(more) == 4 and more[0]["s"] == 1.0 and abs(more[-1]["e"] - 2.0) < 1e-6
+
+
+def test_clean_changes_validates():
+    import pytest
+    from cliptool.pipeline import clean_changes
+
+    ok = clean_changes({"start": 10, "end": 30, "title": " T ", "style": {"preset": "neon", "scale": 9}}, 100)
+    assert ok["title"] == "T" and ok["style"]["scale"] == 1.8
+    for bad in ({"start": 10, "end": 10.5}, {"style": {"preset": "nope"}}, {"title": "  "},
+                {"style": {"preset": "box", "color": "red"}}, {"start": 90, "end": 120}):
+        with pytest.raises(ValueError):
+            clean_changes(bad, 100)

@@ -27,6 +27,17 @@ Opens http://127.0.0.1:8765 — paste a link, choose clip count / length / forma
 **Find clips**, watch progress, then play, download or copy titles. Previous runs are listed on the right.
 The site is only reachable from this computer.
 
+**Editing a clip:** press **Edit** on any clip to open the editor. It has a live 9:16 preview, where you can:
+- trim the start and end (±0.5 s, "Set here" at the playhead, or "Snap" to a sentence edge);
+- change the title and hook;
+- fix the caption text;
+- pick a text style: **Bold highlight**, **Word box**, **One word pop**, **Neon glow**, **Minimal** or
+  **Classic subtitle**;
+- set the caption position (top/middle/bottom), size, colours, words per line and UPPERCASE, or turn captions off;
+- switch the format (9:16, 1:1, 16:9) and framing.
+
+**Save & re-render** rebuilds only that clip (about 30 s). The text style for new runs is set on the main form.
+
 **Deleting:** hover a previous run and press **×**, or open it and press **Delete this run** (removes its clips and
 its downloaded video). **Clear all** removes every run and every downloaded video. Both ask first and can't be undone.
 

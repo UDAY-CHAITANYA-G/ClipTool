@@ -75,6 +75,8 @@ def split_cues(words: list[dict]) -> tuple[list[dict], list[dict]]:
     """
     spoken, cues = [], []
     for w in words:
+        if w["w"] in (">>", "&gt;&gt;", "-", "--"):  # speaker-change markers, not speech
+            continue
         m = CUE_RE.match(w["w"])
         if m:
             kind = m.group(1).strip().lower()

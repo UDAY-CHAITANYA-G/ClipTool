@@ -5,7 +5,6 @@ import re
 import unicodedata
 from pathlib import Path
 
-from .candidates import window_words
 from .ffmpeg import run as ffmpeg_run
 
 SIZES = {"vertical": (1080, 1920), "square": (1080, 1080), "original": (1920, 1080)}
@@ -34,12 +33,61 @@ def _clean(word: str) -> str:
     return re.sub(r"[{}\\]", "", word)
 
 
+# Caption text styles. Each preset sets defaults; the editor can override colours, font, size,
+# position, words per line and uppercase per clip. Keep in sync with PRESETS in static/index.html.
+PRESETS: dict[str, dict] = {
+    "highlight": {"label": "Bold highlight", "font": "Arial Black", "size": 78, "color": "#FFFFFF",
+                  "highlight": "#FFD400", "uppercase": True, "words_per_line": 3, "outline": 5, "mode": "color"},
+    "box":       {"label": "Word box", "font": "Arial Black", "size": 74, "color": "#FFFFFF",
+                  "highlight": "#7C3AED", "uppercase": True, "words_per_line": 3, "outline": 4, "mode": "box"},
+    "single":    {"label": "One word pop", "font": "Impact", "size": 120, "color": "#FFFFFF",
+                  "highlight": "#22D3EE", "uppercase": True, "words_per_line": 1, "outline": 7, "mode": "pop"},
+    "neon":      {"label": "Neon glow", "font": "Arial Black", "size": 76, "color": "#F0ABFC",
+                  "highlight": "#39FF14", "uppercase": True, "words_per_line": 3, "outline": 3, "mode": "glow"},
+    "minimal":   {"label": "Minimal", "font": "Segoe UI Semibold", "size": 64, "color": "#FFFFFF",
+                  "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 5, "outline": 2, "mode": "plain"},
+    "subtitle":  {"label": "Classic subtitle", "font": "Arial", "size": 56, "color": "#FFFFFF",
+                  "highlight": "#FFFFFF", "uppercase": False, "words_per_line": 7, "outline": 0, "mode": "band"},
+}
+POSITIONS = ("bottom", "middle", "top")
+
+
+def caption_style(cfg_captions: dict, override: dict | None) -> dict:
+    """config.toml captions -> preset defaults -> per-clip overrides."""
+    style = dict(cfg_captions)
+    style.setdefault("preset", "highlight")
+    style.update({k: v for k, v in (override or {}).items() if v is not None})
+    preset = PRESETS.get(style["preset"], PRESETS["highlight"])
+    merged = {**preset, "position": "bottom", "scale": 1.0, "margin_bottom": cfg_captions.get("margin_bottom", 520)}
+    # Only per-clip overrides beat the preset; config.toml values apply to the default preset only.
+    if style["preset"] == "highlight" and not override:
+        merged.update({k: cfg_captions[k] for k in ("font", "size", "color", "highlight", "words_per_line", "outline")
+                       if k in cfg_captions})
+    merged.update({k: v for k, v in (override or {}).items() if v is not None and k != "preset"})
+    merged["preset"] = style["preset"] if style["preset"] in PRESETS else "highlight"
+    return merged
+
+
 def build_ass(words: list[dict], clip_start: float, clip_end: float, size: tuple[int, int], cap: dict, aspect: str) -> str:
+    """Word-timed captions as an ASS script, in the style `cap` (see caption_style)."""
+    cap = caption_style({}, None) | cap if "mode" not in cap else cap
     W, H = size
-    scale = {"vertical": 1.0, "square": 0.8, "original": 0.75}[aspect]
-    font_size = int(cap["size"] * scale)
-    margin_v = {"vertical": int(cap["margin_bottom"]), "square": 140, "original": 80}[aspect]
+    aspect_scale = {"vertical": 1.0, "square": 0.8, "original": 0.75}[aspect]
+    font_size = int(float(cap["size"]) * aspect_scale * float(cap.get("scale", 1.0)))
+    pos = cap.get("position", "bottom")
+    align = {"bottom": 2, "middle": 5, "top": 8}.get(pos, 2)
+    margin_v = {"bottom": {"vertical": int(cap.get("margin_bottom", 520)), "square": 140, "original": 80}[aspect],
+                "middle": 0,
+                "top": {"vertical": 300, "square": 120, "original": 70}[aspect]}.get(pos, 0)
     base, hi = _ass_color(cap["color"]), _ass_color(cap["highlight"])
+    mode = cap.get("mode", "color")
+    outline = int(cap.get("outline", 4))
+    border_style, back, shadow = 1, "&H80000000", 2
+    if mode == "band":
+        border_style, back, outline, shadow = 3, "&H60000000", 14, 0  # translucent box behind each line
+    if mode == "glow":
+        shadow = 0
+    out_col = _ass_color(cap["highlight"]) if mode == "glow" else "&H00000000"
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -49,17 +97,26 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{cap['font']},{font_size},{base},{base},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{cap['outline']},2,2,60,60,{margin_v},1
+Style: Cap,{cap['font']},{font_size},{base},{base},{out_col},{back},-1,0,0,0,100,100,0,0,{border_style},{outline},{shadow},{align},70,70,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     n = max(1, int(cap["words_per_line"]))
+    upper = bool(cap.get("uppercase", True))
     words = [w for w in words if clip_start - 0.05 <= w["s"] < clip_end]
     lines = []
     for g in range(0, len(words), n):
         group = words[g:g + n]
-        toks = [_clean(w["w"]).upper() for w in group]
+        toks = [(_clean(w["w"]).upper() if upper else _clean(w["w"])) for w in group]
+        if mode in ("plain", "band"):
+            # Whole line at once, no per-word highlight.
+            st = group[0]["s"] - clip_start
+            en = (words[g + n]["s"] if g + n < len(words) else min(group[-1]["e"] + 0.4, clip_end)) - clip_start
+            en = min(en, clip_end - clip_start)
+            if en > st:
+                lines.append(f"Dialogue: 0,{_ts(st)},{_ts(en)},Cap,,0,0,0,,{' '.join(toks)}")
+            continue
         for k, w in enumerate(group):
             st = w["s"] - clip_start
             en = (group[k + 1]["s"] if k + 1 < len(group) else
@@ -67,9 +124,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             en = min(en, clip_end - clip_start)
             if en <= st:
                 continue
-            text = " ".join(f"{{\\c{hi}}}{t}{{\\c{base}}}" if x == k else t for x, t in enumerate(toks))
-            lines.append(f"Dialogue: 0,{_ts(st)},{_ts(en)},Cap,,0,0,0,,{text}")
+            if mode == "pop":
+                text = f"{{\\c{hi}\\fscx125\\fscy125\\t(0,90,\\fscx100\\fscy100)}}{toks[k]}"
+            elif mode == "box":
+                # Thick outline in the highlight colour reads as a box behind the active word.
+                text = " ".join(f"{{\\3c{hi}\\bord{outline + 14}\\shad0}}{t}{{\\3c&H00000000&\\bord{outline}\\shad2}}"
+                                if x == k else t for x, t in enumerate(toks))
+            else:  # color, glow
+                text = " ".join(f"{{\\c{hi}}}{t}{{\\c{base}}}" if x == k else t for x, t in enumerate(toks))
+            if mode == "glow":
+                # Layer 0: soft coloured halo (transparent fill, blurred thick outline). Layer 1: crisp text.
+                lines.append(f"Dialogue: 0,{_ts(st)},{_ts(en)},Cap,,0,0,0,,{{\\1a&HFF&\\bord{outline + 8}\\blur10}}{text}")
+                lines.append(f"Dialogue: 1,{_ts(st)},{_ts(en)},Cap,,0,0,0,,{{\\bord2\\3c&H00101010&}}{text}")
+            else:
+                lines.append(f"Dialogue: 0,{_ts(st)},{_ts(en)},Cap,,0,0,0,,{text}")
     return header + "\n".join(lines) + "\n"
+
+
+def words_between(sentences: list[dict], start: float, end: float) -> list[dict]:
+    return [w for s in sentences if s["end"] > start - 1 and s["start"] < end + 1 for w in s["words"]
+            if start - 0.05 <= w["s"] < end and w["w"] not in (">>", "&gt;&gt;")]
+
+
+def align_text(words: list[dict], text: str) -> list[dict]:
+    """Put edited caption text onto the original word timings.
+
+    Same word count -> 1:1. Otherwise the new words are spread over the same time
+    span in proportion to their length, so captions stay in sync with speech.
+    """
+    new = text.split()
+    if not words or not new:
+        return [] if not new else words
+    if len(new) == len(words):
+        return [{**w, "w": t} for w, t in zip(words, new)]
+    t0, t1 = words[0]["s"], words[-1]["e"]
+    weights = [len(t) + 2 for t in new]
+    total = sum(weights)
+    out, acc = [], 0.0
+    for t, wt in zip(new, weights):
+        s = t0 + (t1 - t0) * acc / total
+        acc += wt
+        out.append({"w": t, "s": round(s, 3), "e": round(t0 + (t1 - t0) * acc / total, 3)})
+    return out
 
 
 def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None) -> str:
@@ -104,9 +200,12 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     start, dur = start - pre, dur + pre + 0.25
 
     if captions:
-        words = window_words(sentences, clip)
+        words = words_between(sentences, clip["start"], clip["end"])
+        if clip.get("caption_text"):
+            words = align_text(words, clip["caption_text"])
+        style = caption_style(cfg["captions"], clip.get("style"))
         (clips_dir / "subs.ass").write_text(
-            build_ass(words, start, start + dur, SIZES[aspect], cfg["captions"], aspect), encoding="utf-8")
+            build_ass(words, start, start + dur, SIZES[aspect], style, aspect), encoding="utf-8")
 
     x = None
     used_fit = fit

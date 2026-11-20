@@ -18,6 +18,7 @@ import json
 import mimetypes
 import re
 import threading
+import time
 import traceback
 import uuid
 import webbrowser
@@ -26,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from . import pipeline
+from . import pipeline, render
 from .fetch import video_id_from_url
 
 STATIC = Path(__file__).parent / "static"
@@ -41,7 +42,8 @@ def _running_job() -> dict | None:
     return next((j for j in JOBS.values() if j["status"] == "running"), None)
 
 
-def _run_job(job: dict, opts: pipeline.Options) -> None:
+def _run_job(job: dict, work) -> None:
+    """Run `work(log, stage, cancelled) -> result dict` in this thread, recording progress on `job`."""
     def log(msg: str):
         for line in str(msg).splitlines() or [""]:
             job["log"].append(line)
@@ -51,10 +53,10 @@ def _run_job(job: dict, opts: pipeline.Options) -> None:
     def stage(name: str, p: float):
         job["stage"], job["progress"] = name, round(p, 3)
 
+    t0 = time.time()
     try:
-        res = pipeline.run(opts, log=log, stage=stage, cancelled=lambda: job["cancel"])
-        job["result"] = {"folder": res["out_dir"].name, "title": res["info"]["title"],
-                         "seconds": res["seconds"], "clips": res["clips"]}
+        job["result"] = work(log, stage, lambda: job["cancel"])
+        job["result"]["seconds"] = round(time.time() - t0, 1)
         job["status"] = "done"
     except pipeline.Cancelled:
         job["status"], job["stage"] = "cancelled", "Cancelled"
@@ -220,6 +222,33 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/jobs":
             running = _running_job()
             return self._json({"running": running["id"] if running else None})
+        if path == "/api/presets":
+            return self._json({"presets": render.PRESETS, "positions": render.POSITIONS})
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/words", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                data, info, sentences, source = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            pad = 30.0  # room to extend the clip while trimming
+            a, b = max(0.0, clip["start"] - pad), clip["end"] + pad
+            words = [w for s in sentences if s["end"] > a and s["start"] < b for w in s["words"]
+                     if a <= w["s"] < b and w["w"] not in (">>", "&gt;&gt;")]
+            bounds = sorted({round(s["start"], 3) for s in sentences if a <= s["start"] < b} |
+                            {round(s["end"], 3) for s in sentences if a < s["end"] <= b})
+            return self._json({"words": words, "sentence_bounds": bounds, "video_id": info["id"],
+                               "duration": info.get("duration"), "settings": data["settings"]})
+        m = re.fullmatch(r"/source/([A-Za-z0-9_-]{11})", path)
+        if m:
+            p = next((q for q in (WORK / m.group(1)).glob("source.*")
+                      if q.suffix in (".mp4", ".webm", ".mkv")), None) if (WORK / m.group(1)).is_dir() else None
+            return self._file(p) if p else self._error("not found", HTTPStatus.NOT_FOUND)
         m = re.fullmatch(r"/files/(.+)", path)
         if m:
             p = _safe_join(OUTPUT, m.group(1))
@@ -260,9 +289,47 @@ class Handler(BaseHTTPRequestHandler):
                 job = {"id": jid, "url": url, "status": "running", "stage": "Starting", "progress": 0.0,
                        "log": [], "result": None, "error": None, "cancel": False}
                 JOBS[jid] = job
+            style = body.get("style", "highlight")
+            if style not in render.PRESETS:
+                style = "highlight"
             opts = pipeline.Options(url=url, count=count, min_s=min_s, max_s=max_s, aspect=aspect, fit=fit,
-                                    captions=bool(body.get("captions", True)), out=OUTPUT, work=WORK)
-            threading.Thread(target=_run_job, args=(job, opts), daemon=True).start()
+                                    captions=bool(body.get("captions", True)), caption_style=style,
+                                    out=OUTPUT, work=WORK)
+
+            def work(log, stage, cancelled):
+                res = pipeline.run(opts, log=log, stage=stage, cancelled=cancelled)
+                return {"folder": res["out_dir"].name, "title": res["info"]["title"], "clips": res["clips"]}
+
+            threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
+            return self._json({"id": jid}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/edit", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            rank = int(m.group(2))
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                changes = json.loads(self.rfile.read(n) or b"{}")
+                data, info, _, _ = pipeline.load_run(run)
+                pipeline.clean_changes(changes, info.get("duration") or 0)  # validate before queuing
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            except (ValueError, TypeError, KeyError) as e:
+                return self._error(str(e) or "invalid edit")
+            with JOBS_LOCK:
+                if _running_job():
+                    return self._error("A job is already running; wait for it or cancel it.", HTTPStatus.CONFLICT)
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank, "status": "running",
+                       "stage": f"Re-rendering clip #{rank}", "progress": 0.05, "log": [], "result": None,
+                       "error": None, "cancel": False}
+                JOBS[jid] = job
+
+            def work(log, stage, cancelled):
+                return pipeline.edit_clip(run, rank, changes, log=log, stage=stage)
+
+            threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
             return self._json({"id": jid}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/jobs/([a-f0-9]+)/cancel", path)
         if m:

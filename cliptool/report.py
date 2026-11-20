@@ -32,7 +32,13 @@ def clip_records(info: dict, clips: list[dict], sentences: list[dict]) -> list[d
             "thumbnail": c.get("thumbnail"),
             "framing": c.get("framing"),
             "source_url": f"https://youtu.be/{vid}?t={int(c['start'])}",
-            "transcript": window_text(sentences, c),
+            "transcript": c.get("caption_text") or window_text(sentences, c),
+            "caption_text": c.get("caption_text"),
+            "style": c.get("style"),
+            "aspect": c.get("aspect"),
+            "fit": c.get("fit"),
+            "captions": c.get("captions", True),
+            "edited": bool(c.get("edited")),
             "i": c["i"], "j": c["j"],
         })
     return recs

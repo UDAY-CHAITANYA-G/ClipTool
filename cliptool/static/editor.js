@@ -17,6 +17,7 @@
     ["trim", "Trim", '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/>'],
     ["text", "Text", '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>'],
     ["captions", "Captions", '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11h10"/>'],
+    ["logo", "Logo", '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>'],
     ["filters", "Filters", '<circle cx="9" cy="9" r="6"/><circle cx="15" cy="15" r="6"/>'],
     ["audio", "Audio", '<path d="M11 5L6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/>'],
     ["extras", "Extras", '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'],
@@ -64,6 +65,7 @@
             <div class="vig" id="ws-vig"></div>
             <div class="fade" id="ws-fade"></div>
             <div class="seam" id="ws-seam" hidden></div>
+            <div class="ilayer" id="ws-ilayer"></div>
             <div class="cap" id="ws-cap"></div>
             <div class="tlayer" id="ws-tlayer"></div>
             <div class="pbar" id="ws-pbar"></div>
@@ -134,8 +136,9 @@
   }
 
   function getPath(path){
-    const parts = path.split("."); let o = parts[0] === "sel" ? sel() : S;
-    for (const p of parts.slice(parts[0] === "sel" ? 1 : 0, -1)) o = o?.[p];
+    const parts = path.split("."), head = { sel: sel, selimg: selImg }[parts[0]];
+    let o = head ? head() : S;
+    for (const p of parts.slice(head ? 1 : 0, -1)) o = o?.[p];
     return [o, parts[parts.length - 1]];
   }
 
@@ -280,6 +283,24 @@
     }
     layer.querySelectorAll(".tx").forEach(n => { if (!seen.has(n.dataset.id)) n.remove(); });
   }
+  const selImg = () => S.images.find(i => i.id === X.selImg);
+  function drawImages(){
+    const layer = el("ws-ilayer"), fw = el("ws-frame").clientWidth, t = tOut(), D = outDur();
+    const seen = new Set();
+    for (const im of S.images) {
+      seen.add(im.id);
+      let n = layer.querySelector(`[data-id="${im.id}"]`);
+      if (!n) { n = document.createElement("img"); n.className = "im"; n.dataset.id = im.id; n.alt = "Watermark"; n.draggable = false; layer.appendChild(n); }
+      const src = "/wm/" + encodeURIComponent(im.file);
+      if (n.getAttribute("src") !== src) n.src = src;
+      n.style.cssText = `left:${im.x * 100}%;top:${im.y * 100}%;width:${im.size * fw}px;opacity:${im.opacity};`;
+      const on = t >= (im.start || 0) && t <= (im.end == null ? D : im.end);
+      n.classList.toggle("sel", im.id === X.selImg);
+      n.classList.toggle("off", !on && im.id === X.selImg);
+      n.classList.toggle("hide", !on && im.id !== X.selImg);
+    }
+    layer.querySelectorAll(".im").forEach(n => { if (!seen.has(n.dataset.id)) n.remove(); });
+  }
   function drawExtras(){
     const t = tOut(), D = outDur(), pb = S.progress_bar, bar = el("ws-pbar");
     bar.style.display = pb.on ? "" : "none";
@@ -295,7 +316,7 @@
   }
   function refresh(){
     if (!X.open) return;
-    sizeFrame(); drawFrame(); drawCaptions(); drawTexts(); drawExtras(); renderTimeline(); drawSource();
+    sizeFrame(); drawFrame(); drawImages(); drawCaptions(); drawTexts(); drawExtras(); renderTimeline(); drawSource();
     el("ws-title").value = S.title;
     document.querySelector('#ws [data-act="undo"]').disabled = !hist.length;
     document.querySelector('#ws [data-act="redo"]').disabled = !fut.length;
@@ -454,6 +475,38 @@
         <h3>Caption text</h3><textarea rows="6" data-bind="text" aria-label="Caption text">${esc(S.text)}</textarea>
         <p class="note">Fix words or spelling. Timing follows the speech. <button type="button" data-act="resettext">Reset to transcript</button></p>`;
     },
+    logo(){
+      const lib = WM.images || [], def = WM.settings, im = selImg();
+      const posName = (x, y) => Object.entries(WM.positions || {}).find(([, [px, py]]) => Math.abs(px - x) < 0.01 && Math.abs(py - y) < 0.01)?.[0];
+      const full = S.images.length >= (WM.max || 3);
+      let h = `<h3>Images on this clip (${S.images.length}/${WM.max || 3})</h3>
+        <div class="tlist" role="listbox" aria-label="Images on this clip">${S.images.map((x, i) =>
+          `<button type="button" class="titem" role="option" aria-selected="${x.id === X.selImg}" data-act="selimg" data-v="${x.id}">
+            <img class="ithumb" alt="" src="/wm/${encodeURIComponent(x.file)}"><span class="tt">Image ${i + 1} · ${esc(POS_LABEL[posName(x.x, x.y)] || "Custom spot")}</span>
+            <span class="tm">${x.end == null && !x.start ? "whole clip" : `${(x.start || 0).toFixed(1)}–${x.end == null ? outDur().toFixed(1) : x.end.toFixed(1)}s`}</span></button>`).join("")
+          || '<p class="note">No images yet.</p>'}</div>
+        <div class="btnrow">
+          ${def && def.file ? `<button type="button" data-act="adddefault" ${full ? "disabled" : ""}>+ Default watermark</button>` : ""}
+          <label class="filebtn2">+ Upload image<input type="file" accept="image/png,image/jpeg,image/webp" data-upload="1" hidden ${full ? "disabled" : ""}></label>
+        </div>
+        ${lib.length ? `<h3>Your images</h3><div class="wmlib">${lib.map(x =>
+          `<button type="button" data-act="addimg" data-v="${esc(x.name)}" title="Add this image (${x.w}×${x.h})" ${full ? "disabled" : ""}><img alt="" src="/wm/${encodeURIComponent(x.name)}"></button>`).join("")}</div>
+          <p class="note">Click an image to add it. Transparent PNG logos look best.</p>` : ""}`;
+      if (!im) return h + (S.images.length ? '<p class="note">Select an image above (or click it on the preview) to change it.</p>' : "");
+      const pk = posName(im.x, im.y);
+      return h + `<h3>Selected image</h3>
+        <div class="fld">Location<div class="posgrid" role="radiogroup" aria-label="Image location">${Object.keys(WM.positions).map(k =>
+          `<button type="button" role="radio" aria-checked="${k === pk}" data-act="imgpos" data-v="${k}" title="${POS_LABEL[k]}" aria-label="${POS_LABEL[k]}"></button>`).join("")}</div></div>
+        <p class="note">Or drag it on the preview.</p>
+        ${rng("Size", "selimg.size", 0.03, 0.9, 0.01, FMT.pct)}${rng("Opacity", "selimg.opacity", 0.05, 1, 0.05, FMT.pct)}
+        <h3>When it shows</h3>
+        <label class="fld chk"><input type="checkbox" data-act-check="imgwhole" ${im.end == null && !im.start ? "checked" : ""}> Whole clip</label>
+        ${im.end == null && !im.start ? "" : `<div class="row"><label class="fld">From (s)<input type="number" step="0.1" min="0" value="${im.start || 0}" data-bind="selimg.start"></label>
+          <label class="fld">Until (s)<input type="number" step="0.1" min="0" value="${im.end == null ? outDur().toFixed(1) : im.end}" data-bind="selimg.end"></label></div>
+          <div class="btnrow"><button type="button" data-act="imgfrom">Start here</button><button type="button" data-act="imgto">End here</button></div>`}
+        <div class="btnrow"><button type="button" data-act="imgdefault">Make this the default watermark</button>
+          <button type="button" class="danger" data-act="delimg">Remove from clip</button></div>`;
+    },
     filters(){
       const match = Object.entries(C.filters).find(([, p]) => ["brightness", "contrast", "saturation", "warmth", "sharpen"].every(k => Math.abs(p[k] - S.filters[k]) < 1e-3) && !!p.vignette === !!S.filters.vignette);
       return `<h3>Presets</h3>${chips("fpreset", Object.entries(C.filters).map(([k, p]) => [k, p.label]), match?.[0])}
@@ -492,6 +545,14 @@
   }
 
   // ------------------------------------------------------------------ actions
+  function addImage(p){
+    if (S.images.length >= (WM.max || 3)) { toast(`At most ${WM.max || 3} images per clip`); return; }
+    const used = new Set(S.images.map(i => `${i.x},${i.y}`));
+    const spot = Object.values(WM.positions).find(([x, y]) => !used.has(`${x},${y}`)) || [0.5, 0.5];
+    const im = { id: "w" + Math.random().toString(36).slice(2, 8), file: p.file, x: p.x ?? spot[0], y: p.y ?? spot[1],
+                 size: p.size ?? 0.18, opacity: p.opacity ?? 0.9, start: 0, end: null };
+    mutate("addimg", () => { S.images.push(im); X.selImg = im.id; });
+  }
   function newTextId(){ return "t" + Math.random().toString(36).slice(2, 8); }
   const ACTS = {
     close: () => close(),
@@ -531,6 +592,20 @@
     tfrom: () => mutate("ttime", () => { const t = sel(); t.start = +clamp(tOut(), 0, t.end - 0.1).toFixed(1); }),
     tto: () => mutate("ttime", () => { const t = sel(); t.end = +clamp(tOut(), t.start + 0.1, outDur()).toFixed(1); }),
     twhole: () => mutate("ttime", () => { const t = sel(); t.start = 0; t.end = +outDur().toFixed(1); }),
+    selimg: v => { X.selImg = v; renderPanel(); refresh(); },
+    addimg: v => addImage({ file: v }),
+    adddefault: () => { const d = WM.settings; addImage({ file: d.file, x: d.x, y: d.y, size: d.size, opacity: d.opacity }); },
+    imgpos: v => mutate("imgpos", () => { const [x, y] = WM.positions[v]; Object.assign(selImg(), { x, y }); }),
+    imgfrom: () => mutate("imgtime", () => { const m = selImg(); m.start = +clamp(tOut(), 0, (m.end ?? outDur()) - 0.1).toFixed(1); }),
+    imgto: () => mutate("imgtime", () => { const m = selImg(); m.end = +clamp(tOut(), (m.start || 0) + 0.1, outDur()).toFixed(1); }),
+    delimg: () => { if (selImg()) mutate("delimg", () => { S.images = S.images.filter(i => i.id !== X.selImg); X.selImg = null; }); },
+    imgdefault: async () => {
+      const m = selImg(); if (!m) return;
+      const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ watermark: { file: m.file, x: m.x, y: m.y, size: m.size, opacity: m.opacity, auto: true } }) });
+      if (r.ok) { await loadWatermarks(); toast("Saved as the default watermark - new clips get it automatically"); renderPanel(); }
+      else toast("Couldn't save the default watermark.");
+    },
     preset: v => mutate("preset", () => {
       const p = C.presets[v];
       Object.assign(S.style, { preset: v, ...presetStyle(v), scale: 1 });
@@ -612,6 +687,16 @@
       if (num && e.type === "change") mutate("trim", () => setRange(num.dataset.num, +num.value));
     };
     ws.addEventListener("input", onBind);
+    ws.addEventListener("change", async e => {
+      if (e.target.matches("[data-upload]")) {
+        const f = e.target.files[0]; e.target.value = "";
+        try { const im = await uploadWatermark(f); addImage({ file: im.name }); toast("Image uploaded and added"); }
+        catch (err) { toast(err.message); }
+      }
+      if (e.target.matches('[data-act-check="imgwhole"]')) {
+        mutate("imgtime", () => { const m = selImg(); if (e.target.checked) { m.start = 0; m.end = null; } else { m.start = 0; m.end = +outDur().toFixed(1); } });
+      }
+    });
     ws.addEventListener("change", e => { if (e.target.closest("[data-num]") || e.target.closest("select,[type=checkbox]")) onBind(e); });
     el("ws-title").addEventListener("input", e => mutate("title", () => { S.title = e.target.value; }, { panel: false }));
 
@@ -670,6 +755,28 @@
     tt.addEventListener("pointerup", bEnd); tt.addEventListener("pointercancel", bEnd);
 
     // Drag text boxes on the preview.
+    const ilayer = el("ws-ilayer");
+    let idrag = null;
+    ilayer.addEventListener("pointerdown", e => {
+      const n = e.target.closest(".im"); if (!n) return;
+      const m = S.images.find(x => x.id === n.dataset.id); if (!m) return;
+      e.preventDefault(); ilayer.setPointerCapture(e.pointerId);
+      X.selImg = m.id; hist.push(JSON.stringify(S)); fut = []; lastKey = "";
+      const r = el("ws-frame").getBoundingClientRect();
+      idrag = { m, r, dx: (e.clientX - r.left) / r.width - m.x, dy: (e.clientY - r.top) / r.height - m.y };
+      if (X.tool !== "logo") X.tool = "logo";
+      renderPanel(); refresh();
+    });
+    ilayer.addEventListener("pointermove", e => {
+      if (!idrag) return;
+      const { m, r } = idrag;
+      m.x = +clamp((e.clientX - r.left) / r.width - idrag.dx, 0, 1).toFixed(3);
+      m.y = +clamp((e.clientY - r.top) / r.height - idrag.dy, 0, 1).toFixed(3);
+      dirty = true; el("ws-dirty").textContent = "Unsaved changes"; drawImages();
+    });
+    const iEnd = () => { if (idrag) renderPanel(); idrag = null; };
+    ilayer.addEventListener("pointerup", iEnd); ilayer.addEventListener("pointercancel", iEnd);
+
     const layer = el("ws-tlayer");
     let pdrag = null;
     layer.addEventListener("pointerdown", e => {
@@ -691,7 +798,7 @@
     });
     const pEnd = () => { if (pdrag) renderPanel(); pdrag = null; };
     layer.addEventListener("pointerup", pEnd); layer.addEventListener("pointercancel", pEnd);
-    el("ws-frame").addEventListener("click", e => { if (!e.target.closest(".tx")) togglePlay(); });
+    el("ws-frame").addEventListener("click", e => { if (!e.target.closest(".tx, .im")) togglePlay(); });
 
     // Source panel: facecam box move/resize, game / crop box move.
     let sdrag = null;
@@ -730,6 +837,7 @@
       if (typing) return;
       if (e.key === " ") { e.preventDefault(); togglePlay(); }
       else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); seekOut(tOut() + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 2 : 0.1)); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && X.tool === "logo" && selImg()) { e.preventDefault(); ACTS.delimg(); }
       else if ((e.key === "Delete" || e.key === "Backspace") && sel()) { e.preventDefault(); ACTS.deltext(); }
       else if (e.key === "Escape") { e.preventDefault(); close(); }
     });
@@ -745,7 +853,8 @@
     if (!r.ok) { toast(d.error || "Can't edit this clip."); return; }
     const st = clip.style || {}, preset = C.presets[st.preset] ? st.preset : "highlight", p = C.presets[preset];
     X = { open: true, folder, rank, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
-          lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null };
+          lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null, selImg: null };
+    if (!WM.settings) await loadWatermarks();
     const n = (v, def) => v === null || v === undefined ? def : v;
     S = {
       title: clip.title, hook: clip.hook, start: clip.start, end: clip.end,
@@ -758,6 +867,7 @@
       style: { preset, ...presetStyle(preset), position: st.position || p.position || "bottom", scale: n(st.scale, 1),
                ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
       texts: (clip.texts || []).map(t => ({ ...t })),
+      images: (clip.images || []).map(i => ({ ...i })),
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
@@ -787,7 +897,7 @@
       cam_share: S.cam_share, cam_pos: S.cam_pos, game_x: S.game_x, game_y: S.game_y, game_zoom: S.game_zoom,
       speed: S.speed, filters: S.filters, captions: S.captions,
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
-      style: S.style, texts: S.texts, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
+      style: S.style, texts: S.texts, images: S.images, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };
     if (S.fit === "stack") body.facecam = S.facecam || C.default_facecam;

@@ -108,8 +108,15 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
         import shutil
 
         shutil.rmtree(out_dir / "clips", ignore_errors=True)  # drop clips from an earlier run
+        from .assets import default_layer_for_clip
+
+        default_wm = default_layer_for_clip()
+        if default_wm:
+            log(f"  adding the default watermark to every clip")
         for c in clips:
             c["style"] = {"preset": o.caption_style}
+            if default_wm:
+                c["images"] = [dict(default_wm)]
             c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
         for k, c in enumerate(clips, 1):
             at(f"Rendering clip {k} of {len(clips)}", 0.55 + 0.43 * (k - 1) / len(clips))
@@ -262,6 +269,13 @@ def clean_changes(changes: dict, duration: float) -> dict:
                                "position": "top" if pb.get("position") == "top" else "bottom"}
     if "texts" in changes:
         out["texts"] = clean_texts(changes["texts"])
+    if "images" in changes:
+        from .assets import MAX_IMAGES_PER_CLIP, clean_layer
+
+        imgs = changes["images"] or []
+        if not isinstance(imgs, list) or len(imgs) > MAX_IMAGES_PER_CLIP:
+            raise ValueError(f"At most {MAX_IMAGES_PER_CLIP} images per clip.")
+        out["images"] = [clean_layer(i) for i in imgs]
     if "filters" in changes:
         f = changes["filters"] or {}
         clean = {}

@@ -417,6 +417,18 @@ def _layout(aspect: str, fit: str, x: int | None, source: Path | None, clip: dic
     return f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[base]"
 
 
+def image_layers(clip: dict) -> list[dict]:
+    """The clip's image overlays whose files still exist (max 3), each with its absolute path."""
+    from .assets import MAX_IMAGES_PER_CLIP, path_of
+
+    out = []
+    for img in (clip.get("images") or [])[:MAX_IMAGES_PER_CLIP]:
+        p = path_of(img.get("file"))
+        if p:
+            out.append({**img, "path": p})
+    return out
+
+
 def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None,
                   source: Path | None = None, clip: dict | None = None, out_dur: float | None = None,
                   subs: bool | None = None) -> str:
@@ -443,6 +455,15 @@ def _video_filter(aspect: str, fit: str, captions: bool, x: int | None = None,
         graph += (f";color=c=0x{color}:s={W}x{bar_h}:d={out_dur:.3f}[pb];"
                   f"{last}[pb]overlay=x='-W+W*t/{out_dur:.3f}':y={y}:shortest=1[pbv]")
         last = "[pbv]"
+    # Image overlays (watermarks / logos): inputs 1..n, under the captions and text.
+    for k, img in enumerate(image_layers(clip)):
+        a = float(img.get("start") or 0)
+        b = min(float(img["end"]), out_dur or 1e9) if img.get("end") is not None else (out_dur or 1e9)
+        w = _even(W * float(img.get("size", 0.18)))
+        graph += (f";[{k + 1}:v]format=rgba,scale={w}:-2,colorchannelmixer=aa={float(img.get('opacity', 0.85)):.2f}[wm{k}];"
+                  f"{last}[wm{k}]overlay=x='{float(img['x']):.4f}*W-w/2':y='{float(img['y']):.4f}*H-h/2'"
+                  f":enable='between(t,{a:.2f},{b:.2f})'[im{k}]")
+        last = f"[im{k}]"
     use_subs = captions if subs is None else subs
     graph += f";{last}" + ("ass=subs.ass" if use_subs else "null") + "[v]"
     return graph
@@ -519,7 +540,8 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     enc = cfg["encode"]
     crf = QUALITY.get(clip.get("quality", "standard"), enc["crf"])
     ffmpeg_run([
-        "-ss", f"{start:.3f}", "-i", str(source.resolve()), "-t", f"{dur:.3f}",
+        "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(source.resolve()),
+        *[arg for img in image_layers(clip) for arg in ("-i", str(img["path"]))],
         "-filter_complex", _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs),
         "-map", "[v]", "-map", "0:a:0?",
         "-af", _audio_filter(clip, out_dur, enc["loudness_lufs"]),

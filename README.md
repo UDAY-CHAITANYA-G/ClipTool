@@ -37,12 +37,15 @@ and these tools on the left:
 | **Trim** | Drag the handles on the timeline, nudge ±0.5 s, "Set here", or snap to a sentence edge. Speed 0.5×–2× (captions and text stay in sync). |
 | **Text** | Add Title / Label / Call-to-action / Watermark boxes, as many as you like. Each has its own font, size, colour, bold/italic, outline, shadow, background box and animation (fade, pop). Drag it on the preview; set its timing or drag its bar on the timeline. |
 | **Captions** | Standard: Bold highlight, Word box, One word pop, Neon glow, Minimal, Classic subtitle. **GTA 6 themes**: Vice City, Wasted, Mission Passed, Leonida Neon, Heist Cash, Wanted, Phone Text, Ocean Drive. **Customize text**: font, size, bold, italic, UPPERCASE, letter spacing, colours, spoken-word effect (colour / box / pop / glow / none), border width + colour (0 = no border), shadow size + colour + opacity, background band; one-click "No border", "No shadow", "Clean text" and "Reset to defaults". Position, words per line, fix the caption text. |
+| **Logo** | Up to 3 images per clip (watermarks, logos). Add your default watermark or any uploaded image, pick one of 9 locations or drag it on the preview, set size, opacity and when it shows (whole clip by default); "Make this the default watermark". |
 | **Filters** | Brightness, contrast, saturation, warmth, sharpen, vignette; presets Vivid, Cinematic, Warm, Cool, Black & white, Vice sunset. |
 | **Audio** | Volume 0–200%, mute, fade in/out (picture and sound). |
 | **Extras** | Hook text, progress bar (colour, top/bottom), cover image from the current frame, export quality. |
 
 Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes the selected text, Ctrl+S saves.
 **Save & render** rebuilds only that clip (about 30–60 s). The template and text style for new runs are set on the main form.
+
+**Watermark:** on the main form, upload a PNG / JPG / WebP image (transparent PNG works best), choose its location, size and opacity, and tick **Add to new clips** - every new clip gets it automatically, already in place, and you can move or remove it per clip in the editor's Logo tool. Images are stored in `assets/watermarks`.
 
 **Grid / List:** the switch above the clips shows them as cards or as one row per clip (remembered).
 

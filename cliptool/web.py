@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from . import pipeline, render
+from . import assets, pipeline, render
 from .fetch import video_id_from_url
 
 STATIC = Path(__file__).parent / "static"
@@ -197,7 +197,56 @@ class Handler(BaseHTTPRequestHandler):
                 pass  # browser stopped reading (seek / close) - normal for video
 
     # ---- routes --------------------------------------------------------
+    # ---- watermark images + settings ------------------------------------
+    def _assets_route(self, method: str) -> bool:
+        """Handle /api/watermarks, /wm/<name> and /api/settings. Returns True if handled."""
+        path = unquote(urlparse(self.path).path)
+        if method == "GET" and path == "/api/watermarks":
+            self._json({"images": assets.list_images(), "positions": assets.POSITIONS,
+                        "max_per_clip": assets.MAX_IMAGES_PER_CLIP})
+            return True
+        m = re.fullmatch(r"/wm/([^/]+)", path)
+        if method == "GET" and m:
+            p = assets.path_of(m.group(1))
+            self._file(p) if p else self._error("not found", HTTPStatus.NOT_FOUND)
+            return True
+        if method == "POST" and path == "/api/watermarks":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > assets.MAX_UPLOAD:
+                self._error("Images must be 10 MB or smaller.", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return True
+            try:
+                self._json(assets.save_upload(self.rfile.read(n)), HTTPStatus.CREATED)
+            except ValueError as e:
+                self._error(str(e))
+            return True
+        if method == "DELETE" and m is None and path.startswith("/api/watermarks/"):
+            name = path.rsplit("/", 1)[-1]
+            ok = assets.delete_image(name)
+            self._json({"deleted": name}) if ok else self._error("not found", HTTPStatus.NOT_FOUND)
+            return True
+        if path == "/api/settings":
+            if method == "GET":
+                self._json(assets.load_settings())
+                return True
+            if method == "POST":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    body = json.loads(self.rfile.read(n) or b"{}")
+                    wm = body.get("watermark") or {}
+                    layer = assets.clean_layer({**wm, "end": None}, require_file=bool(wm.get("file")))
+                    s = assets.load_settings()
+                    s["watermark"] = {k: layer[k] for k in ("file", "x", "y", "size", "opacity")} | {
+                        "start": 0.0, "end": None, "auto": bool(wm.get("auto")) and layer["file"] is not None}
+                    self._json(assets.save_settings(s))
+                except (ValueError, TypeError) as e:
+                    self._error(str(e) or "invalid settings")
+                return True
+        return False
+
     def do_GET(self):
+        if self._assets_route("GET"):
+            return
         url = urlparse(self.path)
         path = unquote(url.path)
         if path in ("/", "/index.html"):
@@ -278,6 +327,8 @@ class Handler(BaseHTTPRequestHandler):
         self._error("not found", HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
+        if self._assets_route("POST"):
+            return
         path = urlparse(self.path).path
         if path == "/api/jobs":
             try:
@@ -361,6 +412,8 @@ class Handler(BaseHTTPRequestHandler):
         self._error("not found", HTTPStatus.NOT_FOUND)
 
     def do_DELETE(self):
+        if self._assets_route("DELETE"):
+            return
         path = unquote(urlparse(self.path).path)
         with JOBS_LOCK:
             if _running_job():

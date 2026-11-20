@@ -32,6 +32,18 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .opts label{display:flex;flex-direction:column;gap:4px}
 .opts select,.opts input[type=number]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:90px}
 .opts .check{flex-direction:row;align-items:center;gap:6px;padding-bottom:6px}
+.wmrow{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);color:var(--quiet);font-size:13px}
+.wmrow label{display:flex;flex-direction:column;gap:4px}
+.wmrow select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;max-width:180px}
+.wmrow input[type=range]{width:110px;accent-color:var(--accent)}
+.wmrow .check{flex-direction:row;align-items:center;gap:6px;padding-bottom:6px;color:var(--ink)}
+.wmlabel{font-weight:650;color:var(--ink);padding-bottom:7px}
+.wmthumb{width:56px;height:34px;border-radius:6px;border:1px dashed var(--line);display:grid;place-items:center;font-size:11px;overflow:hidden;
+  background:repeating-conic-gradient(var(--soft) 0 25%,transparent 0 50%) 0 0/10px 10px}
+.wmthumb img{max-width:100%;max-height:100%;object-fit:contain}
+.filebtn{cursor:pointer;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-weight:600;flex-direction:row!important}
+.filebtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+#wm-del{font-size:12.5px;padding:6px 10px}
 .msg{margin-top:10px;font-size:13px;color:var(--bad);min-height:1em}
 
 .job{margin-top:16px;display:none}
@@ -168,6 +180,18 @@ button.danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent)}
             </optgroup>
           </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
+      </div>
+      <div class="wmrow" id="wmrow">
+        <span class="wmlabel">Watermark</span>
+        <span class="wmthumb" id="wm-thumb" title="Default watermark">None</span>
+        <label class="filebtn" title="PNG, JPG or WebP, up to 10 MB. Transparent PNG works best.">Upload image
+          <input type="file" id="wm-file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <label>Image<select id="wm-pick" aria-label="Watermark image"></select></label>
+        <label>Location<select id="wm-pos" aria-label="Watermark location"></select></label>
+        <label>Size <span id="wm-size-v"></span><input id="wm-size" type="range" min="0.05" max="0.6" step="0.01"></label>
+        <label>Opacity <span id="wm-op-v"></span><input id="wm-op" type="range" min="0.1" max="1" step="0.05"></label>
+        <label class="check"><input id="wm-auto" type="checkbox"> Add to new clips</label>
+        <button type="button" id="wm-del" class="danger" title="Delete the selected image from the library">Delete image</button>
       </div>
       <div class="msg" id="msg"></div>
     </form>
@@ -398,7 +422,79 @@ $("clearall").addEventListener("click", async () => {
   await loadLibrary(); showEmpty();
 });
 
+/* ===================== Watermark images (shared with the editor) ===================== */
+const WM = { images: [], positions: {}, settings: null, max: 3 };
+const POS_LABEL = { "top-left": "Top left", top: "Top", "top-right": "Top right", left: "Left", center: "Centre",
+                    right: "Right", "bottom-left": "Bottom left", bottom: "Bottom", "bottom-right": "Bottom right" };
+
+async function loadWatermarks(){
+  const [a, b] = await Promise.all([fetch("/api/watermarks").then(r => r.json()), fetch("/api/settings").then(r => r.json())]);
+  WM.images = a.images; WM.positions = a.positions; WM.max = a.max_per_clip; WM.settings = b.watermark;
+  renderWmRow();
+  return WM;
+}
+
+/* Upload a File; returns the stored image info (or throws with a readable message). */
+async function uploadWatermark(file){
+  if (!file) throw new Error("No file chosen.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("Images must be 10 MB or smaller.");
+  const r = await fetch("/api/watermarks", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || "Upload failed.");
+  await loadWatermarks();
+  return d;
+}
+window.uploadWatermark = uploadWatermark;
+
+function posKey(x, y){
+  return Object.entries(WM.positions).find(([, [px, py]]) => Math.abs(px - x) < 0.01 && Math.abs(py - y) < 0.01)?.[0] || "custom";
+}
+
+function renderWmRow(){
+  const s = WM.settings;
+  $("wm-pick").innerHTML = `<option value="">None</option>` + WM.images.map((im, i) =>
+    `<option value="${esc(im.name)}" ${im.name === s.file ? "selected" : ""}>Image ${WM.images.length - i} (${im.w}×${im.h})</option>`).join("");
+  const pk = posKey(s.x, s.y);
+  $("wm-pos").innerHTML = Object.keys(WM.positions).map(k => `<option value="${k}" ${k === pk ? "selected" : ""}>${POS_LABEL[k]}</option>`).join("") +
+    (pk === "custom" ? `<option value="custom" selected>Custom (set in editor)</option>` : "");
+  $("wm-size").value = s.size; $("wm-size-v").textContent = Math.round(s.size * 100) + "%";
+  $("wm-op").value = s.opacity; $("wm-op-v").textContent = Math.round(s.opacity * 100) + "%";
+  $("wm-auto").checked = !!s.auto; $("wm-auto").disabled = !s.file;
+  $("wm-thumb").innerHTML = s.file ? `<img alt="Default watermark" src="/wm/${encodeURIComponent(s.file)}">` : "None";
+  $("wm-del").hidden = !s.file;
+  ["wm-pos", "wm-size", "wm-op"].forEach(id => $(id).disabled = !s.file);
+}
+
+async function saveWm(patch){
+  Object.assign(WM.settings, patch);
+  const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ watermark: WM.settings }) });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Couldn't save the watermark settings."); return; }
+  WM.settings = d.watermark; renderWmRow();
+}
+
+$("wm-file").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  try { const im = await uploadWatermark(f); await saveWm({ file: im.name, auto: true }); toast("Watermark uploaded - it will be added to new clips"); }
+  catch (err) { toast(err.message); }
+});
+$("wm-pick").addEventListener("change", e => saveWm({ file: e.target.value || null, auto: !!e.target.value && WM.settings.auto }));
+$("wm-pos").addEventListener("change", e => { const p = WM.positions[e.target.value]; if (p) saveWm({ x: p[0], y: p[1] }); });
+$("wm-size").addEventListener("input", e => { $("wm-size-v").textContent = Math.round(e.target.value * 100) + "%"; });
+$("wm-size").addEventListener("change", e => saveWm({ size: +e.target.value }));
+$("wm-op").addEventListener("input", e => { $("wm-op-v").textContent = Math.round(e.target.value * 100) + "%"; });
+$("wm-op").addEventListener("change", e => saveWm({ opacity: +e.target.value }));
+$("wm-auto").addEventListener("change", e => saveWm({ auto: e.target.checked }));
+$("wm-del").addEventListener("click", async () => {
+  const name = WM.settings.file; if (!name) return;
+  if (!confirm("Delete this watermark image from your library?\n\nClips already rendered keep it; clips you edit later lose it.")) return;
+  const r = await fetch("/api/watermarks/" + encodeURIComponent(name), { method: "DELETE" });
+  if (!r.ok) { toast("Couldn't delete the image."); return; }
+  await loadWatermarks(); toast("Image deleted");
+});
+
 (async () => {
+  loadWatermarks().catch(() => {});
   const items = await loadLibrary();
   const r = await fetch("/api/jobs"); const d = await r.json();
   if (d.running) { setBusy(true); poll(d.running); }

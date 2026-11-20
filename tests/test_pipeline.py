@@ -200,3 +200,31 @@ def test_custom_caption_fields():
     assert band[15] == "3" and band[6] == "&H00332211"
     ok = clean_changes({"style": {"preset": "vice", "outline": 99, "shadow": -3, "mode": "plain", "background": 1}}, 100)
     assert ok["style"]["outline"] == 12 and ok["style"]["shadow"] == 0 and ok["style"]["background"] is True
+
+
+def test_watermark_images(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+    import pytest
+    from cliptool import assets
+    from cliptool.render import _video_filter
+
+    monkeypatch.setattr(assets, "WATERMARKS", tmp_path / "wm")
+    monkeypatch.setattr(assets, "SETTINGS", tmp_path / "settings.json")
+    monkeypatch.setattr(assets, "ASSETS", tmp_path)
+    ok, png = cv2.imencode(".png", np.zeros((40, 80, 4), np.uint8))
+    info = assets.save_upload(png.tobytes())
+    assert info["name"].endswith(".png") and info["w"] == 80 and assets.path_of(info["name"])
+    for bad in (b"", b"GIF89a....", b"\x89PNG\r\n\x1a\nbroken"):
+        with pytest.raises(ValueError):
+            assets.save_upload(bad)
+    assert assets.path_of("../settings.json") is None
+    layer = assets.clean_layer({"file": info["name"], "x": 2, "size": 5, "opacity": 0})
+    assert layer["x"] == 1.0 and layer["size"] == 0.9 and layer["opacity"] == 0.05 and layer["end"] is None
+    # default watermark only applies when "add to new clips" is on
+    assert assets.default_layer_for_clip() is None
+    assets.save_settings({"watermark": {**assets.DEFAULT_LAYER, "file": info["name"], "auto": True}})
+    assert assets.default_layer_for_clip()["file"] == info["name"]
+    g = _video_filter("vertical", "blur", True, None, None, {"images": [layer, layer]}, out_dur=10.0, subs=True)
+    assert "[1:v]format=rgba" in g and "[2:v]format=rgba" in g and "enable='between(t,0.00,10.00)'" in g
+    assert g.index("overlay=x='1.0000*W-w/2'") < g.index("ass=subs.ass")  # images under captions

@@ -27,7 +27,13 @@
 .ws-frame .cap.bottom{bottom:var(--cap-bottom,27%)}.ws-frame .cap.top{top:var(--cap-top,15%)}.ws-frame .cap.middle{top:50%;transform:translateY(-50%)}
 .ws-frame .cap .w{display:inline-block;margin:0 .12em}
 .ws-frame .pbar{position:absolute;left:0;height:1.2%;min-height:3px;width:0;pointer-events:none}
-.ws-frame .tlayer{position:absolute;inset:0}
+.ws-frame .tlayer{position:absolute;inset:0;pointer-events:none}
+.ws-frame .tlayer .tx{pointer-events:auto}
+.ws-frame .ilayer{position:absolute;inset:0;pointer-events:none}
+.ws-frame .im{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:move;user-select:none;touch-action:none;max-width:none}
+.ws-frame .im.sel{outline:2px dashed #fff;outline-offset:3px}
+.ws-frame .im.off{opacity:.3 !important}
+.ws-frame .im.hide{display:none}
 .ws-frame .tx{position:absolute;transform:translate(-50%,-50%);white-space:pre;text-align:center;cursor:move;line-height:1.15;
   padding:.04em .12em;border-radius:.12em;user-select:none;touch-action:none}
 .ws-frame .tx.sel{outline:2px dashed #fff;outline-offset:4px}
@@ -107,3 +113,17 @@ button.danger{color:var(--bad)}
   .ws-panel{grid-column:1 / -1;border-left:none;border-top:1px solid var(--line)}
   .ws{overflow:auto;grid-template-rows:auto auto auto}
 }
+
+.ithumb{width:34px;height:22px;object-fit:contain;border-radius:4px;flex:none;
+  background:repeating-conic-gradient(var(--soft) 0 25%,transparent 0 50%) 0 0/8px 8px}
+.wmlib{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
+.wmlib button{aspect-ratio:16/10;padding:4px;border-radius:8px;display:grid;place-items:center;
+  background:repeating-conic-gradient(var(--soft) 0 25%,transparent 0 50%) 0 0/10px 10px}
+.wmlib img{max-width:100%;max-height:100%;object-fit:contain}
+.posgrid{display:grid;grid-template-columns:repeat(3,34px);grid-template-rows:repeat(3,26px);gap:4px;margin-top:4px}
+.posgrid button{padding:0;border-radius:5px;position:relative}
+.posgrid button::after{content:"";position:absolute;inset:8px 11px;border-radius:2px;background:var(--quiet);opacity:.5}
+.posgrid button[aria-checked=true]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 15%,transparent)}
+.posgrid button[aria-checked=true]::after{background:var(--accent);opacity:1}
+.filebtn2{cursor:pointer;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 10px;font-size:12.5px;font-weight:600}
+.filebtn2:focus-within{outline:2px solid var(--accent);outline-offset:2px}

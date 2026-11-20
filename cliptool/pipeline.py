@@ -280,6 +280,23 @@ def clean_changes(changes: dict, duration: float) -> dict:
                                "position": "top" if pb.get("position") == "top" else "bottom"}
     if "texts" in changes:
         out["texts"] = clean_texts(changes["texts"])
+    if "speed_zones" in changes:
+        zs = changes["speed_zones"] or []
+        if not isinstance(zs, list) or len(zs) > 30:
+            raise ValueError("At most 30 speed zones per clip.")
+        clean_z = []
+        for z in sorted(zs, key=lambda z: float(z.get("start", 0))):
+            za, zb, sp = float(z["start"]), float(z["end"]), float(z["speed"])
+            if zb - za < 0.2:
+                continue
+            if not 0.25 <= sp <= 4.0:
+                raise ValueError("Zone speeds must be between 0.25x and 4x.")
+            if clean_z and za < clean_z[-1]["end"]:
+                za = clean_z[-1]["end"]  # no overlaps: later zones start where the previous ends
+                if zb - za < 0.2:
+                    continue
+            clean_z.append({"start": round(za, 2), "end": round(zb, 2), "speed": round(sp, 3)})
+        out["speed_zones"] = clean_z
     if "description" in changes:
         d = str(changes["description"] or "").strip()
         if len(d) > 5000:

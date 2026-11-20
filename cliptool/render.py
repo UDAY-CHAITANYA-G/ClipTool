@@ -478,7 +478,7 @@ def _audio_filter(clip: dict, out_dur: float, loudness: float) -> str:
     speed = _num(clip, "speed", 1.0)
     parts = []
     if abs(speed - 1.0) > 1e-3:
-        parts.append(f"atempo={speed:.4f}")
+        parts.append(atempo_chain(speed))
     if clip.get("mute"):
         parts.append("volume=0")
     else:
@@ -495,6 +495,62 @@ def _audio_filter(clip: dict, out_dur: float, loudness: float) -> str:
     return ",".join(parts)
 
 
+def atempo_chain(speed: float) -> str:
+    """atempo accepts 0.5-2 per stage in older ffmpeg; chain stages for 0.25-4."""
+    parts, s = [], float(speed)
+    while s > 2.0 + 1e-9:
+        parts.append(2.0)
+        s /= 2.0
+    while s < 0.5 - 1e-9:
+        parts.append(0.5)
+        s /= 0.5
+    parts.append(s)
+    return ",".join(f"atempo={x:.4f}" for x in parts if abs(x - 1.0) > 1e-4) or "anull"
+
+
+def speed_pieces(start: float, end: float, base: float, zones: list[dict] | None) -> list[tuple[float, float, float]]:
+    """Split [start, end] (source seconds) into (a, b, speed) pieces: zones get their speed, the rest `base`."""
+    out, cur = [], start
+    for z in sorted(zones or [], key=lambda z: z["start"]):
+        za, zb = max(z["start"], cur), min(z["end"], end)
+        if zb - za < 0.05:
+            continue
+        if za - cur > 0.02:
+            out.append((cur, za, base))
+        out.append((za, zb, float(z["speed"])))
+        cur = zb
+    if end - cur > 0.02:
+        out.append((cur, end, base))
+    return out
+
+
+class Timeline:
+    """Output time <-> source time for a clip made of pieces (hook first, then the clip)."""
+
+    def __init__(self, pieces: list[tuple[str, float, float, float]]):
+        self.pieces = []  # (part, src_a, src_b, speed, out_a)
+        t = 0.0
+        for part, a, b, sp in pieces:
+            self.pieces.append((part, a, b, sp, t))
+            t += (b - a) / sp
+        self.duration = t
+
+    def out_time(self, part: str, src: float) -> float:
+        ps = [p for p in self.pieces if p[0] == part]
+        if not ps:
+            return 0.0
+        if src <= ps[0][1]:
+            return ps[0][4]
+        for _, a, b, sp, oa in ps:
+            if a <= src <= b:
+                return oa + (src - a) / sp
+        last = ps[-1]
+        return last[4] + (last[2] - last[1]) / last[3]
+
+    def part_start(self, part: str) -> float:
+        return next((p[4] for p in self.pieces if p[0] == part), 0.0)
+
+
 def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, rank: int,
                 aspect: str, fit: str, captions: bool, cfg: dict, version: str = "") -> dict:
     """Render one clip. `version` is added to the file name (re-renders use a fresh name, so a copy
@@ -509,13 +565,16 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     pre = min(0.15, start)
     start, dur = start - pre, dur + pre + 0.25
 
-    # Hook intro: a 2-8 s teaser (source seconds hs..he) plays first, then the clip from its start.
+    # Hook intro: a 1-10 s teaser (source seconds hs..he) plays first, then the clip from its start.
     hook = clip.get("hook_intro") or {}
     hs, he = hook.get("start"), hook.get("end")
     use_hook = bool(hook.get("on")) and hs is not None and he is not None and 1.0 <= he - hs <= 10.0
-    hd = (he - hs) if use_hook else 0.0
-    hook_out = hd / speed
-    out_dur = (hd + dur) / speed
+    zones = [z for z in (clip.get("speed_zones") or []) if z["end"] > start and z["start"] < start + dur]
+    pieced = use_hook or bool(zones)
+    tl = Timeline(([("hook", hs, he, speed)] if use_hook else []) +
+                  [("main", a, b, sp) for a, b, sp in speed_pieces(start, start + dur, speed, zones)])
+    hook_out = tl.part_start("main")
+    out_dur = tl.duration if pieced else dur / speed
 
     texts = clip.get("texts") or []
     subs = bool(captions or texts)
@@ -523,20 +582,18 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         words = words_between(sentences, clip["start"], clip["end"]) if captions else []
         if captions and clip.get("caption_text"):
             words = align_text(words, clip["caption_text"])
-        if use_hook:
-            # One timeline: teaser words at 0..hd, then the clip's words after it.
-            teaser = words_between(sentences, hs, he) if captions else []
-            words = ([{**w, "s": w["s"] - hs, "e": min(w["e"], he) - hs} for w in teaser] +
-                     [{**w, "s": hd + w["s"] - start, "e": hd + w["e"] - start} for w in words])
+        style = caption_style(cfg["captions"], clip.get("style"))
+        if pieced:
+            # Put every word on the output timeline (teaser words, then the clip's, through the speed zones).
+            teaser = words_between(sentences, hs, he) if (captions and use_hook) else []
+            words = ([{**w, "s": tl.out_time("hook", w["s"]), "e": tl.out_time("hook", min(w["e"], he))} for w in teaser] +
+                     [{**w, "s": tl.out_time("main", w["s"]), "e": tl.out_time("main", w["e"])} for w in words])
             texts = [{**t, "start": float(t.get("start", 0)) + hook_out, "end": float(t.get("end", 0)) + hook_out}
                      for t in texts]
-            t0, t1 = 0.0, hd + dur
+            ass = build_ass(words, 0.0, out_dur, SIZES[aspect], style, aspect, 1.0, texts, captions)
         else:
-            t0, t1 = start, start + dur
-        style = caption_style(cfg["captions"], clip.get("style"))
-        (clips_dir / "subs.ass").write_text(
-            build_ass(words, t0, t1, SIZES[aspect], style, aspect, speed, texts, captions),
-            encoding="utf-8")
+            ass = build_ass(words, start, start + dur, SIZES[aspect], style, aspect, speed, texts, captions)
+        (clips_dir / "subs.ass").write_text(ass, encoding="utf-8")
 
     x = None
     used_fit = fit
@@ -557,8 +614,8 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         used_fit = plan["mode"]
         if used_fit == "crop":
             x = crop_x(source, plan["x"])
-        elif used_fit == "pan" and use_hook:
-            # The pan path is timed to the clip alone; with a teaser in front, hold its middle position.
+        elif used_fit == "pan" and pieced:
+            # The pan path is timed to the clip at one speed; with a teaser or speed zones, hold its middle position.
             used_fit = "crop"
             xs = sorted(c for _, c in plan["path"])
             x = crop_x(source, xs[len(xs) // 2])
@@ -568,19 +625,38 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
 
     enc = cfg["encode"]
     crf = QUALITY.get(clip.get("quality", "standard"), enc["crf"])
-    src_inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(source.resolve())]
-    if use_hook:
+    src = str(source.resolve())
+    if pieced:
         from .ffmpeg import has_audio
 
         audio = has_audio(source)
-        src_inputs = ["-ss", f"{hs:.3f}", "-t", f"{hd:.3f}", "-i", str(source.resolve())] + src_inputs
-        pre_graph = ("[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[hv][ha];" if audio else "[0:v][1:v]concat=n=2:v=1:a=0[hv];")
-        vgraph = _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs,
-                               pre=pre_graph, vin="[hv]", img_input=2, shift=hook_out)
+        # Inputs: [hook] + main, each pre-seeked; pieces are trimmed from them relative to their seek point.
+        inputs, seek = [], {}
+        if use_hook:
+            seek["hook"] = (len(inputs) // 6, hs)
+            inputs += ["-ss", f"{hs:.3f}", "-t", f"{he - hs:.3f}", "-i", src]
+        seek["main"] = (len(inputs) // 6, start)
+        inputs += ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
+        parts, labels = [], []
+        for k, (part, a, b, sp, _) in enumerate(tl.pieces):
+            idx, base_t = seek[part]
+            ra, rb = a - base_t, b - base_t
+            parts.append(f"[{idx}:v]trim={ra:.3f}:{rb:.3f},setpts=(PTS-STARTPTS)/{sp:.4f}[pv{k}]")
+            labels.append(f"[pv{k}]")
+            if audio:
+                parts.append(f"[{idx}:a]atrim={ra:.3f}:{rb:.3f},asetpts=PTS-STARTPTS,{atempo_chain(sp)}[pa{k}]")
+                labels.append(f"[pa{k}]")
+        n = len(tl.pieces)
+        pre_graph = ";".join(parts) + f";{''.join(labels)}concat=n={n}:v=1:a={1 if audio else 0}[tv]" + ("[ta]" if audio else "") + ";"
+        flat = {**clip, "speed": 1.0}  # speed is already applied per piece
+        vgraph = _video_filter(aspect, used_fit, captions, x, source, flat, out_dur, subs,
+                               pre=pre_graph, vin="[tv]", img_input=len(seek), shift=hook_out)
         if audio:
-            vgraph += f";[ha]{_audio_filter(clip, out_dur, enc['loudness_lufs'])}[aout]"
+            vgraph += f";[ta]{_audio_filter(flat, out_dur, enc['loudness_lufs'])}[aout]"
+        src_inputs = inputs
         audio_args = ["-map", "[v]"] + (["-map", "[aout]"] if audio else [])
     else:
+        src_inputs = ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
         vgraph = _video_filter(aspect, used_fit, captions, x, source, clip, out_dur, subs)
         audio_args = ["-map", "[v]", "-map", "0:a:0?", "-af", _audio_filter(clip, out_dur, enc["loudness_lufs"])]
     ffmpeg_run([

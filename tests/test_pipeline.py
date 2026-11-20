@@ -309,3 +309,23 @@ def test_description_template():
     assert description.for_clip(info, {**clip, "description": "Mine"}, description.DEFAULTS) == "Mine"
     # missing contact: the copyright line is dropped rather than left half-empty
     assert "contact me first at" not in description.for_clip(info, clip, description.DEFAULTS)
+
+
+def test_speed_zones_timeline_and_validation():
+    import pytest
+    from cliptool.pipeline import clean_changes
+    from cliptool.render import Timeline, atempo_chain, speed_pieces
+
+    ps = speed_pieces(0, 20, 1.0, [{"start": 5, "end": 9, "speed": 2}, {"start": 12, "end": 14, "speed": 0.5}])
+    assert ps == [(0, 5, 1.0), (5, 9, 2.0), (9, 12, 1.0), (12, 14, 0.5), (14, 20, 1.0)]
+    tl = Timeline([("hook", 30, 33, 1.0)] + [("main", a, b, s) for a, b, s in ps])
+    assert tl.duration == 3 + 5 + 2 + 3 + 4 + 6
+    assert tl.out_time("main", 7) == 3 + 5 + 1     # halfway through the 2x zone
+    assert tl.out_time("main", 13) == 3 + 5 + 2 + 3 + 2  # halfway through the slow-mo zone
+    assert tl.out_time("hook", 31.5) == 1.5
+    assert atempo_chain(4) == "atempo=2.0000,atempo=2.0000" and atempo_chain(0.25).count("atempo") == 2
+    ok = clean_changes({"speed_zones": [{"start": 8, "end": 12, "speed": 3}, {"start": 5, "end": 9, "speed": 2},
+                                        {"start": 1, "end": 1.1, "speed": 2}]}, 100)
+    assert ok["speed_zones"] == [{"start": 5.0, "end": 9.0, "speed": 2.0}, {"start": 9.0, "end": 12.0, "speed": 3.0}]
+    with pytest.raises(ValueError):
+        clean_changes({"speed_zones": [{"start": 1, "end": 5, "speed": 8}]}, 100)

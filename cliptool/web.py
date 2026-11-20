@@ -398,6 +398,32 @@ class Handler(BaseHTTPRequestHandler):
             generated = description.for_clip(info, {**clip, "description": None}, settings)
             return self._json({"text": description.for_clip(info, clip, settings), "generated": generated,
                                "custom": bool(clip.get("description"))})
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/(waveform|silences)", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            try:
+                data, info, sentences, source = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from urllib.parse import parse_qs
+
+            from . import signals
+
+            q = parse_qs(urlparse(self.path).query)
+            if m.group(3) == "waveform":
+                lo = max(0.0, float(q.get("lo", [clip["start"] - 30])[0]))
+                hi = min(float(info.get("duration") or 1e9), float(q.get("hi", [clip["end"] + 30])[0]))
+                if hi - lo <= 0.5 or hi - lo > 600:
+                    return self._error("bad range")
+                return self._json({"lo": lo, "hi": hi, "peaks": signals.waveform(source, lo, hi, 800)})
+            a = float(q.get("start", [clip["start"]])[0])
+            b = float(q.get("end", [clip["end"]])[0])
+            return self._json({"zones": signals.silent_parts({"start": a, "end": b}, sentences, source)})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/hook", path)
         if m:
             run = _run_dir(m.group(1))

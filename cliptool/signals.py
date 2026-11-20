@@ -243,3 +243,55 @@ def find_hook(clip: dict, sentences: list[dict], info: dict, source, cues=None,
     k = int(np.argmax(score))
     a, b, text = cands[k][:3]
     return {"start": round(a - 0.1, 2), "end": round(b + 0.15, 2), "text": text, "score": round(float(score[k]), 3)}
+
+
+
+# ---- timeline waveform and silent parts --------------------------------------------------
+
+def waveform(source, lo: float, hi: float, buckets: int = 800) -> list[float]:
+    """Loudness per bucket over [lo, hi] (0-1, log scale) for drawing the timeline waveform."""
+    from .ffmpeg import read_audio_range
+
+    samples = read_audio_range(source, lo, hi - lo, 8000)
+    if len(samples) < buckets:
+        return [0.0] * buckets
+    n = len(samples) // buckets
+    rms = np.sqrt(np.mean(samples[: n * buckets].reshape(buckets, n) ** 2, axis=1))
+    db = 20 * np.log10(rms + 1e-5)
+    lo_db, hi_db = np.percentile(db, 5), db.max()
+    return [round(float(v), 3) for v in np.clip((db - lo_db) / max(1e-6, hi_db - lo_db), 0, 1)]
+
+
+def silent_parts(clip: dict, sentences: list[dict], source, min_gap: float = 1.0, speed: float = 2.0) -> list[dict]:
+    """Stretches inside the clip with no speech and quiet audio - good candidates to speed up."""
+    from .ffmpeg import read_audio_range
+
+    a, b = clip["start"], clip["end"]
+    words = sorted((w for s in sentences if s["end"] > a and s["start"] < b for w in s["words"]
+                    if a - 1 <= w["s"] <= b + 1), key=lambda w: w["s"])
+    gaps, cur = [], a
+    for w in words:
+        if w["s"] - cur >= min_gap:
+            gaps.append((cur, w["s"]))
+        cur = max(cur, w["e"])
+    if b - cur >= min_gap:
+        gaps.append((cur, b))
+    if not gaps:
+        return []
+    rate, hop = 8000, 0.1
+    samples = read_audio_range(source, a, b - a, rate)
+    n = len(samples) // int(rate * hop)
+    if not n:
+        return []
+    rms = np.sqrt(np.mean(samples[: n * int(rate * hop)].reshape(n, -1) ** 2, axis=1))
+    quiet = np.percentile(rms, 45)
+    zones = []
+    for ga, gb in gaps:
+        ga, gb = max(a, ga + 0.15), min(b, gb - 0.15)  # keep breaths around words
+        if gb - ga < min_gap * 0.8:
+            continue
+        i, j = int((ga - a) / hop), int((gb - a) / hop)
+        seg = rms[i:max(i + 1, j)]
+        if len(seg) and float(np.median(seg)) <= quiet * 1.4:  # quiet, not a loud action beat
+            zones.append({"start": round(ga, 2), "end": round(gb, 2), "speed": speed})
+    return zones

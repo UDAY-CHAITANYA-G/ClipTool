@@ -90,11 +90,16 @@
       <footer class="ws-tl">
         <div class="tl-head"><span id="ws-tl-l"></span><span id="ws-tl-r"></span></div>
         <div class="track" id="ws-track" title="Click to jump; drag the orange handles to trim">
+          <canvas class="wave" id="ws-wave" aria-hidden="true"></canvas>
           <div class="ticks" id="ws-ticks"></div>
           <div class="sel" id="ws-sel"><div class="h l" data-h="start"></div><div class="h r" data-h="end"></div></div>
           <div class="hk" id="ws-hk" hidden title="Hook intro - plays first"></div>
           <div class="ph" id="ws-ph"></div>
         </div>
+        <div class="zlane" id="ws-zlane" title="Speed zones: drag on an empty spot to add one, drag a zone to move it, its edges to resize, click to change its speed">
+          <span class="zhint" id="ws-zhint">Speed zones - drag here to speed up or slow down a part</span>
+        </div>
+        <div class="zpop" id="ws-zpop" hidden role="dialog" aria-label="Zone speed"></div>
         <div class="ttrack" id="ws-ttrack"></div>
       </footer>
       <video id="ws-video" playsinline preload="auto" hidden></video>`;
@@ -104,11 +109,34 @@
 
   // ------------------------------------------------------------------ helpers
   const outSize = () => C.aspects[S.aspect].size;
-  const outDur = () => (S.end - S.start) / S.speed;
+  const ZSPEEDS = [0.25, 0.5, 0.75, 1.25, 1.5, 2, 3, 4];
+  function pieces(){
+    const out = [], end = S.end; let cur = S.start;
+    for (const z of [...(S.zones || [])].sort((a, b) => a.start - b.start)) {
+      const za = Math.max(z.start, cur), zb = Math.min(z.end, end);
+      if (zb - za < 0.05) continue;
+      if (za - cur > 0.02) out.push([cur, za, S.speed]);
+      out.push([za, zb, z.speed]); cur = zb;
+    }
+    if (end - cur > 0.02) out.push([cur, end, S.speed]);
+    return out;
+  }
+  const outDur = () => pieces().reduce((t, [a, b, sp]) => t + (b - a) / sp, 0);
+  function srcToOut(src){
+    let t = 0;
+    for (const [a, b, sp] of pieces()) { if (src <= b) return t + Math.max(0, src - a) / sp; t += (b - a) / sp; }
+    return t;
+  }
+  function outToSrc(o){
+    let t = 0;
+    for (const [a, b, sp] of pieces()) { const d = (b - a) / sp; if (o <= t + d) return a + (o - t) * sp; t += d; }
+    return S.end;
+  }
+  const zoneAt = src => (S.zones || []).find(z => src >= z.start && src < z.end);
   const video = () => el("ws-video");
-  const tOut = () => X.phase === "hook" ? -1 : (video().currentTime - S.start) / S.speed;
-  const hookOn = () => S.hook && S.hook.on && S.hook.start != null && S.hook.end != null;
-  const hookLen = () => hookOn() ? S.hook.end - S.hook.start : 0;
+  const tOut = () => X.phase === "hook" ? -1 : srcToOut(video().currentTime);
+  const hookOn = () => S.hookIntro && S.hookIntro.on && S.hookIntro.start != null && S.hookIntro.end != null;
+  const hookLen = () => hookOn() ? S.hookIntro.end - S.hookIntro.start : 0;
   const sel = () => S.texts.find(t => t.id === X.selText);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
@@ -345,15 +373,58 @@
     el("ws-tl-l").textContent = `Clip ${fmt(S.start)} – ${fmt(S.end)} · ${d.toFixed(1)} s source → ${total.toFixed(1)} s output` +
       (hookOn() ? ` (incl. ${(hookLen() / S.speed).toFixed(1)} s hook)` : "");
     const hk = el("ws-hk");
-    if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hook.start) + "%"; hk.style.width = Math.max(0.4, (S.hook.end - S.hook.start) / span * 100) + "%"; }
+    if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hookIntro.start) + "%"; hk.style.width = Math.max(0.4, (S.hookIntro.end - S.hookIntro.start) / span * 100) + "%"; }
     else hk.hidden = true;
     el("ws-tl-r").textContent = outDur() > 60 ? "Longer than 60 s: too long for YouTube Shorts" : "";
+    const zl = el("ws-zlane");
+    zl.querySelectorAll(".zone").forEach(n => n.remove());
+    el("ws-zhint").hidden = (S.zones || []).length > 0;
+    for (const z of S.zones || []) {
+      const n = document.createElement("div");
+      n.className = "zone " + (z.speed > 1 ? "fast" : "slow") + (z === X.selZone ? " sel" : "");
+      n.style.left = pct(z.start) + "%"; n.style.width = Math.max(0.6, (z.end - z.start) / span * 100) + "%";
+      n.innerHTML = `<span class="e l" data-zedge="start"></span><span class="zl">${z.speed > 1 ? "⏩" : "🐢"} ${z.speed}×</span><span class="e r" data-zedge="end"></span>`;
+      n._zone = z;
+      zl.appendChild(n);
+    }
+    drawWave();
     const tt = el("ws-ttrack");
     tt.innerHTML = S.texts.map(t => {
-      const a = S.start + t.start * S.speed, b = S.start + Math.min(t.end, outDur()) * S.speed;
+      const a = outToSrc(t.start), b = outToSrc(Math.min(t.end, outDur()));
       return `<div class="tbar${t.id === X.selText ? " sel" : ""}" data-id="${t.id}" style="left:${pct(a)}%;width:${Math.max(0.5, (b - a) / span * 100)}%;background:${t.box ? t.box_color : t.color};color:${t.box ? t.color : "#111"}" title="${esc(t.text)}">
         <span class="e l" data-edge="start"></span>${esc(t.text)}<span class="e r" data-edge="end"></span></div>`;
     }).join("");
+  }
+  function drawWave(){
+    const c = el("ws-wave"), tr = el("ws-track");
+    if (!X.wave) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = Math.round(tr.clientWidth * dpr), H = Math.round(tr.clientHeight * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; X.waveDrawn = null; }
+    const key = W + "x" + H; if (X.waveDrawn === key) return; X.waveDrawn = key;
+    const ctx = c.getContext("2d"), pk = X.wave.peaks, span = X.hi - X.lo, wlo = X.wave.lo, wspan = X.wave.hi - X.wave.lo;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--quiet") || "#888";
+    ctx.globalAlpha = 0.55;
+    for (let x = 0; x < W; x++) {
+      const t = X.lo + x / W * span, i = Math.floor((t - wlo) / wspan * pk.length);
+      const v = pk[Math.max(0, Math.min(pk.length - 1, i))] || 0, h = Math.max(1, v * (H - 4));
+      ctx.fillRect(x, (H - h) / 2, 1, h);
+    }
+  }
+  async function loadWave(){
+    try {
+      const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/waveform?lo=${X.lo}&hi=${X.hi}`);
+      if (r.ok) { X.wave = await r.json(); X.waveDrawn = null; drawWave(); }
+    } catch {}
+  }
+  function openZonePop(z){
+    X.selZone = z;
+    const pop = el("ws-zpop");
+    pop.innerHTML = `<b>${fmt(z.start)}–${fmt(z.end)}</b> <span class="zq">${(z.end - z.start).toFixed(1)} s → ${((z.end - z.start) / z.speed).toFixed(1)} s</span>
+      <div class="chips">${ZSPEEDS.map(v => `<button type="button" role="radio" aria-checked="${v === z.speed}" data-zspeed="${v}">${v}×</button>`).join("")}</div>
+      <button type="button" class="danger" data-zdel="1">Remove zone</button>`;
+    pop.hidden = false;
+    refresh();
   }
   function renderTicks(){
     const span = X.hi - X.lo || 1;
@@ -438,14 +509,24 @@
         <p class="note" style="margin-top:0">Plays the most gripping 3-5 s first, then the clip from its start.</p>
         <label class="fld chk"><input type="checkbox" data-act-check="hookon" ${hookOn() ? "checked" : ""}> Start with a hook</label>
         <div class="btnrow"><button type="button" data-act="findhook">Find best hook</button>
-          ${S.hook && S.hook.start != null ? `<button type="button" data-act="playhook">▶ Preview hook + clip</button>` : ""}</div>
-        ${S.hook && S.hook.start != null ? `<div class="hookbox${hookOn() ? "" : " off"}">
-          <div class="hooktext">“${esc(S.hook.text || "")}”</div>
-          <div class="hookmeta">${fmt(S.hook.start)}–${fmt(S.hook.end)} · ${(S.hook.end - S.hook.start).toFixed(1)} s</div>
+          ${S.hookIntro && S.hookIntro.start != null ? `<button type="button" data-act="playhook">▶ Preview hook + clip</button>` : ""}</div>
+        ${S.hookIntro && S.hookIntro.start != null ? `<div class="hookbox${hookOn() ? "" : " off"}">
+          <div class="hooktext">“${esc(S.hookIntro.text || "")}”</div>
+          <div class="hookmeta">${fmt(S.hookIntro.start)}–${fmt(S.hookIntro.end)} · ${(S.hookIntro.end - S.hookIntro.start).toFixed(1)} s</div>
           <div class="btnrow"><button type="button" data-act="hookset" data-k="start">Start here</button>
             <button type="button" data-act="hookset" data-k="end">End here</button>
             <button type="button" data-act="hooknudge" data-k="start" data-v="-0.5">Start −0.5s</button>
             <button type="button" data-act="hooknudge" data-k="end" data-v="0.5">End +0.5s</button></div></div>` : ""}
+        <h3>Speed zones</h3>
+        <p class="note" style="margin-top:0">Speed up boring parts, slow down big moments. Drag on the lane under the timeline
+          to add a zone; the waveform shows where people talk and where it's quiet.</p>
+        <div class="btnrow"><button type="button" data-act="autozones">Auto: speed up silent parts</button>
+          <button type="button" data-act="addzone">+ Zone at playhead</button>
+          ${(S.zones || []).length ? '<button type="button" class="danger" data-act="clearzones">Clear all</button>' : ""}</div>
+        ${(S.zones || []).length ? `<div class="tlist">${S.zones.map((z, i) => `<div class="zitem ${z.speed > 1 ? "fast" : "slow"}">
+          <span class="tt">${fmt(z.start)}–${fmt(z.end)}</span>
+          <select data-zsel="${i}" aria-label="Zone speed">${ZSPEEDS.map(v => `<option ${v === z.speed ? "selected" : ""} value="${v}">${v}×</option>`).join("")}</select>
+          <button type="button" data-act="delzone" data-v="${i}" aria-label="Remove zone">✕</button></div>`).join("")}</div>` : ""}
         <h3>Speed</h3>${chips("speed", SPEEDS.map(v => [v, v + "×"]), S.speed)}${rng("Custom speed", "speed", 0.5, 2, 0.05, FMT.x)}
         <p class="note">Captions and text keep their timing at any speed. Output length: ${outDur().toFixed(1)} s.</p>`;
     },
@@ -627,22 +708,45 @@
         const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/hook`);
         const d = await r.json();
         if (!r.ok || !d.hook) { toast(d.error || "No good hook found in this clip."); renderPanel(); return; }
-        mutate("hook", () => { S.hook = { on: true, start: d.hook.start, end: d.hook.end, text: d.hook.text }; });
+        mutate("hookintro", () => { S.hookIntro = { on: true, start: d.hook.start, end: d.hook.end, text: d.hook.text }; });
         toast("Hook found: " + d.hook.text.slice(0, 60));
       } finally { const b2 = document.querySelector('#ws [data-act="findhook"]'); if (b2) { b2.disabled = false; b2.textContent = "Find best hook"; } }
     },
-    playhook: () => { const v = video(); X.phase = "hook"; v.currentTime = S.hook.start; v.playbackRate = S.speed; v.play(); },
+    playhook: () => { const v = video(); X.phase = "hook"; v.currentTime = S.hookIntro.start; v.playbackRate = S.speed; v.play(); },
     hookset: (v, b) => mutate("hooktime", () => {
-      const t = video().currentTime, h = S.hook;
+      const t = video().currentTime, h = S.hookIntro;
       if (b.dataset.k === "start") h.start = +Math.min(t, h.end - 1).toFixed(2); else h.end = +Math.max(t, h.start + 1).toFixed(2);
       h.text = X.words.filter(w => w.s >= h.start - 0.05 && w.s < h.end).map(w => w.w).join(" ");
     }),
     hooknudge: (v, b) => mutate("hooktime", () => {
-      const h = S.hook, k = b.dataset.k;
+      const h = S.hookIntro, k = b.dataset.k;
       h[k] = +(h[k] + +v).toFixed(2);
       if (h.end - h.start < 1) h[k === "start" ? "start" : "end"] = k === "start" ? h.end - 1 : h.start + 1;
       h.text = X.words.filter(w => w.s >= h.start - 0.05 && w.s < h.end).map(w => w.w).join(" ");
     }),
+    autozones: async () => {
+      const b = document.querySelector('#ws [data-act="autozones"]'); if (b) { b.disabled = true; b.textContent = "Listening…"; }
+      try {
+        const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/silences?start=${S.start}&end=${S.end}`);
+        const d = await r.json();
+        if (!r.ok || !d.zones.length) { toast(d.error || "No silent parts found in this clip."); renderPanel(); return; }
+        mutate("zones", () => {
+          const keep = (S.zones || []).filter(z => !d.zones.some(n => n.start < z.end && n.end > z.start));
+          S.zones = [...keep, ...d.zones].sort((a, c) => a.start - c.start);
+        });
+        toast(`Added ${d.zones.length} 2× zone${d.zones.length > 1 ? "s" : ""} on silent parts`);
+      } finally { const b2 = document.querySelector('#ws [data-act="autozones"]'); if (b2) { b2.disabled = false; b2.textContent = "Auto: speed up silent parts"; } }
+    },
+    addzone: () => {
+      const t = clamp(video().currentTime, S.start, S.end - 0.5);
+      if (zoneAt(t)) { toast("There's already a zone here"); return; }
+      const next = (S.zones || []).filter(z => z.start > t).sort((a, b) => a.start - b.start)[0];
+      const z = { start: +t.toFixed(2), end: +Math.min(t + 3, S.end, next ? next.start : 1e9).toFixed(2), speed: 2 };
+      mutate("zones", () => { S.zones = [...(S.zones || []), z].sort((a, b) => a.start - b.start); });
+      openZonePop(z);
+    },
+    delzone: v => mutate("zones", () => { S.zones.splice(+v, 1); el("ws-zpop").hidden = true; }),
+    clearzones: () => mutate("zones", () => { S.zones = []; el("ws-zpop").hidden = true; }),
     spdstep: v => {
       const steps = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
       const i = steps.findIndex(s => s >= S.speed - 1e-6);
@@ -711,12 +815,12 @@
     const D = outDur();
     S.texts.forEach(t => { t.end = Math.min(t.end, +D.toFixed(2)); t.start = Math.min(t.start, Math.max(0, t.end - 0.1)); });
   }
-  function seekOut(t){ video().currentTime = S.start + clamp(t, 0, outDur()) * S.speed; }
+  function seekOut(t){ video().currentTime = outToSrc(clamp(t, 0, outDur())); }
   function togglePlay(){
     const v = video();
     if (v.paused) {
       const fromTop = v.currentTime < S.start || v.currentTime >= S.end - 0.05;
-      if (fromTop && hookOn()) { X.phase = "hook"; v.currentTime = S.hook.start; }
+      if (fromTop && hookOn()) { X.phase = "hook"; v.currentTime = S.hookIntro.start; }
       else if (fromTop) { X.phase = "main"; v.currentTime = S.start; }
       v.playbackRate = S.speed; v.play();
     }
@@ -776,8 +880,8 @@
         catch (err) { toast(err.message); }
       }
       if (e.target.matches('[data-act-check="hookon"]')) {
-        if (e.target.checked && !(S.hook && S.hook.start != null)) { e.target.checked = false; ACTS.findhook(); return; }
-        mutate("hookon", () => { S.hook.on = e.target.checked; });
+        if (e.target.checked && !(S.hookIntro && S.hookIntro.start != null)) { e.target.checked = false; ACTS.findhook(); return; }
+        mutate("hookon", () => { S.hookIntro.on = e.target.checked; });
       }
       if (e.target.matches('[data-act-check="imgwhole"]')) {
         mutate("imgtime", () => { const m = selImg(); if (e.target.checked) { m.start = 0; m.end = null; } else { m.start = 0; m.end = +outDur().toFixed(1); } });
@@ -788,10 +892,61 @@
     el("ws-speed").addEventListener("change", e => mutate("speed", () => { S.speed = +e.target.value; video().playbackRate = S.speed; }));
 
     v.addEventListener("loadeddata", () => { refresh(); renderPanel(); });
+    const zl = el("ws-zlane");
+    let zdrag = null;
+    zl.addEventListener("pointerdown", e => {
+      const n = e.target.closest(".zone"), t = tAt(e, zl);
+      zl.setPointerCapture(e.pointerId);
+      hist.push(JSON.stringify(S)); fut = []; lastKey = "";
+      if (n) {
+        const z = n._zone; X.selZone = z;
+        zdrag = { z, mode: e.target.dataset.zedge || "move", x0: t, a0: z.start, b0: z.end, moved: false };
+      } else {
+        if (t < S.start || t > S.end) { hist.pop(); return; }
+        const z = { start: +t.toFixed(2), end: +t.toFixed(2), speed: 2 };
+        S.zones = [...(S.zones || []), z];
+        zdrag = { z, mode: "new", x0: t, a0: t, b0: t, moved: true };
+      }
+    });
+    zl.addEventListener("pointermove", e => {
+      if (!zdrag) return;
+      const t = clamp(tAt(e, zl), S.start, S.end), z = zdrag.z, others = S.zones.filter(o => o !== z);
+      const lo = Math.max(S.start, ...others.filter(o => o.end <= zdrag.a0 + 1e-6).map(o => o.end));
+      const hi = Math.min(S.end, ...others.filter(o => o.start >= zdrag.b0 - 1e-6).map(o => o.start));
+      if (Math.abs(t - zdrag.x0) > 0.05) zdrag.moved = true;
+      if (zdrag.mode === "new") { z.start = +clamp(Math.min(t, zdrag.x0), lo, hi).toFixed(2); z.end = +clamp(Math.max(t, zdrag.x0), lo, hi).toFixed(2); }
+      else if (zdrag.mode === "start") z.start = +clamp(t, lo, z.end - 0.3).toFixed(2);
+      else if (zdrag.mode === "end") z.end = +clamp(t, z.start + 0.3, hi).toFixed(2);
+      else { const len = zdrag.b0 - zdrag.a0, a = clamp(zdrag.a0 + (t - zdrag.x0), lo, hi - len); z.start = +a.toFixed(2); z.end = +(a + len).toFixed(2); }
+      dirty = true; el("ws-dirty").textContent = "Unsaved changes"; renderTimeline();
+    });
+    const zEnd = () => {
+      if (!zdrag) return;
+      const z = zdrag.z;
+      if (zdrag.mode === "new" && z.end - z.start < 0.3) S.zones = S.zones.filter(o => o !== z);  // just a click
+      else { S.zones.sort((a, b) => a.start - b.start); openZonePop(z); }
+      if (!zdrag.moved && zdrag.mode !== "new") openZonePop(z);
+      zdrag = null; renderPanel(); refresh();
+    };
+    zl.addEventListener("pointerup", zEnd); zl.addEventListener("pointercancel", zEnd);
+    el("ws-zpop").addEventListener("click", e => {
+      const z = X.selZone; if (!z) return;
+      const sp = e.target.closest("[data-zspeed]");
+      if (sp) { mutate("zspeed", () => { z.speed = +sp.dataset.zspeed; }); openZonePop(z); }
+      if (e.target.closest("[data-zdel]")) mutate("zones", () => { S.zones = S.zones.filter(o => o !== z); X.selZone = null; el("ws-zpop").hidden = true; });
+    });
+    document.addEventListener("pointerdown", e => {
+      if (X.open && !e.target.closest("#ws-zpop, #ws-zlane")) el("ws-zpop").hidden = true;
+    });
+    ws.addEventListener("change", e => {
+      const s = e.target.closest("[data-zsel]");
+      if (s) mutate("zspeed", () => { S.zones[+s.dataset.zsel].speed = +s.value; });
+    });
     v.addEventListener("seeked", refresh);
     const tick = () => {
       if (!X.open) return;
-      if (X.phase === "hook" && v.currentTime >= S.hook.end) { X.phase = "main"; v.currentTime = S.start; }
+      if (X.phase === "hook" && v.currentTime >= S.hookIntro.end) { X.phase = "main"; v.currentTime = S.start; }
+      if (!v.paused) { const z = X.phase === "hook" ? null : zoneAt(v.currentTime), r = z ? z.speed : S.speed; if (Math.abs(v.playbackRate - r) > 1e-3) v.playbackRate = r; }
       else if (!v.paused && v.currentTime >= S.end) { v.pause(); v.currentTime = S.end; X.phase = "main"; }
       refresh();
       document.querySelector('#ws [data-act="play"]').textContent = v.paused ? "▶ Play" : "❚❚ Pause";
@@ -833,7 +988,7 @@
     });
     tt.addEventListener("pointermove", e => {
       if (!bdrag) return;
-      const d = (tAt(e, tt) - bdrag.x0) / S.speed, D = outDur(), t = bdrag.t;
+      const d = srcToOut(tAt(e, tt)) - srcToOut(bdrag.x0), D = outDur(), t = bdrag.t;
       if (bdrag.edge === "start") t.start = +clamp(bdrag.s0 + d, 0, t.end - 0.1).toFixed(2);
       else if (bdrag.edge === "end") t.end = +clamp(bdrag.e0 + d, t.start + 0.1, D).toFixed(2);
       else { const len = bdrag.e0 - bdrag.s0; t.start = +clamp(bdrag.s0 + d, 0, D - len).toFixed(2); t.end = +(t.start + len).toFixed(2); }
@@ -956,8 +1111,9 @@
                ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
       texts: (clip.texts || []).map(t => ({ ...t })),
       images: (clip.images || []).map(i => ({ ...i })),
-      hook: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
+      hookIntro: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
       description: clip.description || null,
+      zones: (clip.speed_zones || []).map(z => ({ ...z })),
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
@@ -968,7 +1124,7 @@
     const v = video();
     v.src = d.source_url || ("/source/" + X.videoId);
     v.addEventListener("loadedmetadata", () => { v.currentTime = S.start; v.playbackRate = S.speed; }, { once: true });
-    renderTicks(); renderPanel(); refresh();
+    renderTicks(); renderPanel(); refresh(); loadWave();
     el("ws-title").focus();
   }
 
@@ -988,7 +1144,8 @@
       speed: S.speed, filters: S.filters, captions: S.captions,
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
       style: S.style, texts: S.texts, images: S.images,
-      hook_intro: S.hook && S.hook.start != null ? S.hook : { on: false },
+      hook_intro: S.hookIntro && S.hookIntro.start != null ? S.hookIntro : { on: false },
+      speed_zones: (S.zones || []).map(({ start, end, speed }) => ({ start, end, speed })),
       description: S.description && X.desc && S.description.trim() === (X.desc.generated || "").trim() ? null : S.description, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };

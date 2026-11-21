@@ -677,7 +677,7 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
             parts.append(f"[{idx}:v]trim={ra:.3f}:{rb:.3f},setpts=(PTS-STARTPTS)/{sp:.4f}[pv{k}]")
             labels.append(f"[pv{k}]")
             if audio:
-                parts.append(f"[{idx}:a]atrim={ra:.3f}:{rb:.3f},asetpts=PTS-STARTPTS,{atempo_chain(sp)}[pa{k}]")
+                parts.append(f"[{idx}:a]atrim={ra:.3f}:{rb:.3f},aresample=48000,asetpts=N/SR/TB,{atempo_chain(sp)},asetpts=N/SR/TB[pa{k}]")
                 labels.append(f"[pa{k}]")
         n = len(tl.pieces)
         pre_graph = ";".join(parts) + f";{''.join(labels)}concat=n={n}:v=1:a={1 if audio else 0}[tv]" + ("[ta]" if audio else "") + ";"
@@ -685,7 +685,8 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
         vgraph = _video_filter(aspect, used_fit, captions, x, source, flat, out_dur, subs,
                                pre=pre_graph, vin="[tv]", img_input=len(seek), shift=hook_out)
         if audio:
-            vgraph += f";[ta]{_audio_filter(flat, out_dur, enc['loudness_lufs'])}[aout]"
+            # Rebuild audio timestamps from the sample count after joining the pieces (see above).
+            vgraph += f";[ta]asetpts=N/SR/TB,{_audio_filter(flat, out_dur, enc['loudness_lufs'])},asetpts=N/SR/TB[aout]"
         src_inputs = inputs
         audio_args = ["-map", "[v]"] + (["-map", "[aout]"] if audio else [])
     else:

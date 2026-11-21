@@ -8,7 +8,7 @@ Placeholders (a line is left out when any of its placeholders is empty):
   {channel_handle} original channel @handle        {video_title}   original video title
   {video_url}      original video link             {timestamp_url} link to the exact moment
   {start} {end}    clip start / end in the video   {my_channel}    your channel name
-  {contact}        how to reach you                {hashtags}      your hashtags
+  {contact}        how to reach you                {hashtags}      your hashtags + the original channel's tag
 """
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ Clipped and edited by {my_channel}.
 
 {hashtags}"""
 
-DEFAULTS = {"template": DEFAULT_TEMPLATE, "my_channel": "", "contact": "", "hashtags": "#Shorts #GTA6 #Gaming"}
+DEFAULTS = {"template": DEFAULT_TEMPLATE, "my_channel": "ClipStories", "contact": "Instagram @clipstories (DM)",
+            "hashtags": "#Shorts #GTA6 #Gaming"}
 MAX_LEN = 5000  # YouTube's description limit
 PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 
@@ -40,6 +41,20 @@ def _fmt(t: float) -> str:
     h, rem = divmod(t, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def channel_tag(channel: str) -> str:
+    """'The Gaming Verge' -> '#TheGamingVerge' (letters and digits only)."""
+    words = re.findall(r"[^\W_]+", channel or "")
+    return "#" + "".join(w[:1].upper() + w[1:] for w in words) if words else ""
+
+
+def with_channel_tag(hashtags: str, channel: str) -> str:
+    """Your hashtags plus the original channel's tag (once), so every clip credits its channel."""
+    tag = channel_tag(channel)
+    if not tag or tag.lower() in hashtags.lower().split():
+        return hashtags
+    return f"{hashtags} {tag}".strip()
 
 
 def context(info: dict, clip: dict, settings: dict) -> dict:
@@ -57,7 +72,7 @@ def context(info: dict, clip: dict, settings: dict) -> dict:
         "end": _fmt(clip.get("end", 0)),
         "my_channel": settings.get("my_channel", ""),
         "contact": settings.get("contact", ""),
-        "hashtags": settings.get("hashtags", ""),
+        "hashtags": with_channel_tag(settings.get("hashtags", ""), info.get("channel") or ""),
     }
 
 

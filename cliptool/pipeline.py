@@ -529,7 +529,16 @@ def make_source_fast(run_dir: Path, log: Callable[[str], None] = print,
         else:
             new.unlink(missing_ok=True)
             raise RuntimeError("The video is open somewhere (full-video view or a player). Close it and try again.")
-        new.replace(source.with_suffix(".mp4") if source.suffix != ".mp4" else source)
+        target = source.with_suffix(".mp4")
+        for _ in range(60):
+            try:
+                new.replace(target)
+                break
+            except PermissionError:
+                time.sleep(2)
+        else:
+            old.replace(source)  # put the original back
+            raise RuntimeError("Couldn't swap in the new video (a file is locked - is OneDrive syncing?).")
         _remove_when_free(old)
     log(f"Done: source is now {codec} ({round(source.stat().st_size / 2 ** 20)} MB).")
     if stage:

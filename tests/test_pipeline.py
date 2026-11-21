@@ -308,7 +308,9 @@ def test_description_template():
     # an edited description wins over the template
     assert description.for_clip(info, {**clip, "description": "Mine"}, description.DEFAULTS) == "Mine"
     # missing contact: the copyright line is dropped rather than left half-empty
-    assert "contact me first at" not in description.for_clip(info, clip, description.DEFAULTS)
+    assert "contact me first at" not in description.for_clip(info, clip, {**description.DEFAULTS, "contact": ""})
+    assert description.for_clip(info, clip, description.DEFAULTS).endswith("#StreamerTV")  # channel tag added once
+    assert description.with_channel_tag("#Shorts #streamertv", "Streamer TV") == "#Shorts #streamertv"
 
 
 def test_speed_zones_timeline_and_validation():

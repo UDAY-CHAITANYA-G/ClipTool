@@ -122,23 +122,44 @@ def _format(max_height: int, h264_only: bool = False) -> str:
 def redownload_h264(url: str, work: Work, cookies_from_browser: str | None = None, max_height: int = 1080,
                     log=print) -> Path:
     """Fetch the H.264 version of a video next to the current source; returns its path (not yet swapped in)."""
+    import shutil
+    import time
+
     import yt_dlp
 
-    for p in work.dir.glob("source_h264.*"):
-        p.unlink(missing_ok=True)
+    # Download outside the project: OneDrive (and virus scanners) lock fresh files in synced folders,
+    # which breaks yt-dlp's renames of its .part files.
+    tmp = Path.home() / ".cliptool" / "tmp" / work.dir.name
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    for p in work.dir.glob("source_h264*"):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass  # a locked leftover from an earlier try; harmless
     opts = _base_opts(cookies_from_browser) | {
         "format": _format(max_height, h264_only=True),
         "merge_output_format": "mp4",
-        "outtmpl": str(work.path("source_h264.%(ext)s")),
+        "outtmpl": str(tmp / "source_h264.%(ext)s"),
         "quiet": True, "noprogress": True,
         "logger": _Logger(log),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
-    for p in work.dir.glob("source_h264.*"):
-        if p.suffix == ".mp4" and p.stat().st_size > 0:
-            return p
-    raise RuntimeError("YouTube has no H.264 version of this video at this size.")
+    got = next((p for p in tmp.glob("source_h264.mp4") if p.stat().st_size > 0), None)
+    if not got:
+        raise RuntimeError("YouTube has no H.264 version of this video at this size.")
+    dest = work.path("source_h264.mp4")
+    for _ in range(60):
+        try:
+            shutil.move(str(got), str(dest))
+            break
+        except PermissionError:
+            time.sleep(2)
+    else:
+        raise RuntimeError("Couldn't move the new video into place (a file is locked - is OneDrive syncing?).")
+    shutil.rmtree(tmp, ignore_errors=True)
+    return dest
 
 
 class _Logger:

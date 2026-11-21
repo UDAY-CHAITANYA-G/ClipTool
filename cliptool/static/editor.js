@@ -93,6 +93,7 @@
       </div>
       <footer class="ws-tl">
         <div class="tl-head"><span id="ws-tl-l"></span><span id="ws-tl-r"></span></div>
+        <div class="order" id="ws-order" role="list" aria-label="Play order of the parts of this clip"></div>
         <div class="track" id="ws-track" title="Click to jump; drag the orange handles to trim">
           <canvas class="wave" id="ws-wave" aria-hidden="true"></canvas>
           <div class="ticks" id="ws-ticks"></div>
@@ -135,6 +136,40 @@
     let t = 0;
     for (const [a, b, sp] of pieces()) { const d = (b - a) / sp; if (o <= t + d) return a + (o - t) * sp; t += d; }
     return S.end;
+  }
+  /* The parts of the finished video in the order they play: [hook] then the clip, split by speed zones. */
+  function playOrder(){
+    const out = [];
+    if (hookOn()) out.push({ kind: "hook", a: S.hookIntro.start, b: S.hookIntro.end, sp: S.speed, o0: 0 });
+    let t = hookOn() ? hookLen() / S.speed : 0;
+    for (const [a, b, sp] of pieces()) {
+      const z = (S.zones || []).find(z => Math.abs(z.start - a) < 0.06 || (a >= z.start - 0.02 && b <= z.end + 0.02));
+      out.push({ kind: z ? (sp > 1 ? "fast" : "slow") : "main", a, b, sp, o0: t, zone: z || null });
+      t += (b - a) / sp;
+    }
+    out.forEach((p, i) => { p.n = i + 1; p.len = (p.b - p.a) / p.sp; });
+    return out;
+  }
+  const NUM = n => "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"[n - 1] || `(${n})`;
+  function renderOrder(){
+    const box = el("ws-order"), parts = playOrder(), total = parts.reduce((s, p) => s + p.len, 0) || 1;
+    const v = video();
+    const now = X.phase === "hook" && hookOn() ? (v.currentTime - S.hookIntro.start) / S.speed
+      : (hookOn() ? hookLen() / S.speed : 0) + srcToOut(v.currentTime);
+    const sig = parts.map(p => [p.kind, p.a.toFixed(2), p.b.toFixed(2), p.sp].join(":")).join("|");
+    if (box._sig !== sig) {
+      box._sig = sig;
+      const lab = { hook: "Hook - plays first", main: "Clip", fast: "Faster", slow: "Slower" };
+      box.innerHTML = `<span class="olab">Play order</span><div class="obar">${parts.map(p => `
+        <button type="button" role="listitem" class="oseg ${p.kind}" data-order="${p.n - 1}" style="flex:${Math.max(p.len, total * 0.035)} 1 0"
+          title="${NUM(p.n)} ${lab[p.kind]}: ${fmt(p.a)}-${fmt(p.b)} of the video${p.sp !== 1 ? ` at ${p.sp}×` : ""}, ${p.len.toFixed(1)} s in the clip - click to play from here">
+          <b>${NUM(p.n)}</b><span>${p.kind === "hook" ? "Hook" : p.kind === "main" ? "Clip" : (p.kind === "fast" ? "⏩ " : "🐢 ") + p.sp + "×"}</span><i>${p.len.toFixed(1)}s</i></button>`).join("")}
+        <span class="oph" id="ws-oph"></span></div>`;
+    }
+    const ph = el("ws-oph"); if (ph) ph.style.left = Math.min(100, Math.max(0, now / total * 100)) + "%";
+    box.querySelectorAll(".oseg").forEach((b, i) => b.classList.toggle("now", now >= parts[i].o0 - 0.01 && now < parts[i].o0 + parts[i].len));
+    box.hidden = parts.length < 2 && !hookOn();
+    return parts;
   }
   const zoneAt = src => (S.zones || []).find(z => src >= z.start && src < z.end);
   const video = () => el("ws-video");
@@ -388,7 +423,8 @@
     el("ws-tl-l").textContent = `Clip ${fmt(S.start)} – ${fmt(S.end)} · ${d.toFixed(1)} s source → ${total.toFixed(1)} s output` +
       (hookOn() ? ` (incl. ${(hookLen() / S.speed).toFixed(1)} s hook)` : "");
     const hk = el("ws-hk");
-    if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hookIntro.start) + "%"; hk.style.width = Math.max(0.4, (S.hookIntro.end - S.hookIntro.start) / span * 100) + "%"; }
+    const order = renderOrder();
+    if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hookIntro.start) + "%"; hk.style.width = Math.max(0.4, (S.hookIntro.end - S.hookIntro.start) / span * 100) + "%"; hk.innerHTML = `<b>${NUM(1)}</b>`; }
     else hk.hidden = true;
     el("ws-tl-r").textContent = outDur() > 60 ? "Longer than 60 s: too long for YouTube Shorts" : "";
     const zl = el("ws-zlane");
@@ -398,7 +434,8 @@
       const n = document.createElement("div");
       n.className = "zone " + (z.speed > 1 ? "fast" : "slow") + (z === X.selZone ? " sel" : "");
       n.style.left = pct(z.start) + "%"; n.style.width = Math.max(0.6, (z.end - z.start) / span * 100) + "%";
-      n.innerHTML = `<span class="e l" data-zedge="start"></span><span class="zl">${z.speed > 1 ? "⏩" : "🐢"} ${z.speed}×</span><span class="e r" data-zedge="end"></span>`;
+      const op = order.find(p => p.zone === z);
+      n.innerHTML = `<span class="e l" data-zedge="start"></span><span class="zl">${op ? NUM(op.n) + " " : ""}${z.speed > 1 ? "⏩" : "🐢"} ${z.speed}×</span><span class="e r" data-zedge="end"></span>`;
       n._zone = z;
       zl.appendChild(n);
     }
@@ -896,6 +933,14 @@
   function wire(){
     const ws = el("ws"), v = video();
     ws.addEventListener("click", e => {
+      const ob = e.target.closest("[data-order]");
+      if (ob) {  // play order strip: play from the start of that part
+        const p = playOrder()[+ob.dataset.order], v = video();
+        if (p.kind === "hook") { X.phase = "hook"; v.currentTime = p.a; }
+        else { X.phase = "main"; v.currentTime = p.a + 0.01; }
+        v.playbackRate = p.sp; v.play(); refresh();
+        return;
+      }
       const tb = e.target.closest("[data-tool]");
       if (tb) { X.tool = tb.dataset.tool; renderPanel(); return; }
       const b = e.target.closest("[data-act]");

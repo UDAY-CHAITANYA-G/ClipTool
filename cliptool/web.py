@@ -509,7 +509,7 @@ class Handler(BaseHTTPRequestHandler):
             clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
             if not clip:
                 return self._error("not found", HTTPStatus.NOT_FOUND)
-            wd = Path(data["settings"]["work_dir"])
+            wd = pipeline.resolve_work_dir(data)
             work = Work(wd.parent, wd.name)
             info = work.load("info.json") if work.has("info.json") else dict(data["video"])
             if work.has("info.json"):
@@ -571,7 +571,7 @@ class Handler(BaseHTTPRequestHandler):
             from .cache import Work
             from .signals import waveform
 
-            wd = Path(data["settings"]["work_dir"])
+            wd = pipeline.resolve_work_dir(data)
             work = Work(wd.parent, wd.name)
             if work.has("overview_wave.json"):
                 return self._json(work.load("overview_wave.json"))
@@ -631,7 +631,7 @@ class Handler(BaseHTTPRequestHandler):
             from .signals import find_hook
             from .cache import Work
 
-            wd = Path(data["settings"]["work_dir"])
+            wd = pipeline.resolve_work_dir(data)
             cues = Work(wd.parent, wd.name).load("transcript.json").get("cues")
             return self._json({"hook": find_hook(clip, sentences, info, source, cues)})
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/facecam", path)

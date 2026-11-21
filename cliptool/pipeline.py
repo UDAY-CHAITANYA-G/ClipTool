@@ -197,6 +197,17 @@ EDITABLE_STYLE = {"preset", "position", "scale", "color", "highlight", "font", "
                   "spacing", "background", "band_color", "band_opacity"}
 
 
+def resolve_work_dir(data: dict) -> Path:
+    """The run's download folder; if the downloads folder was moved (Settings > Storage), look for it there."""
+    from .assets import folder
+
+    wd = Path(data["settings"]["work_dir"])
+    if wd.exists():
+        return wd
+    moved = folder("work") / wd.name
+    return moved if moved.exists() else wd
+
+
 def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
     """clips.json, video info, transcript sentences and source video of a run."""
     import json
@@ -204,7 +215,7 @@ def load_run(run_dir: Path) -> tuple[dict, dict, list[dict], Path]:
     from .cache import Work
 
     data = json.loads((run_dir / "clips.json").read_text(encoding="utf-8"))
-    work_dir = Path(data["settings"]["work_dir"])
+    work_dir = resolve_work_dir(data)
     work = Work(work_dir.parent, work_dir.name)
     source = next((p for p in work.dir.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm")), None)
     if not source:
@@ -504,7 +515,7 @@ def make_source_fast(run_dir: Path, log: Callable[[str], None] = print,
     data, info, _, source = load_run(run_dir)
     if video_codec(source) not in SLOW_CODECS:
         return {"folder": run_dir.name, "codec": video_codec(source), "changed": False}
-    wd = Path(data["settings"]["work_dir"])
+    wd = resolve_work_dir(data)
     work = Work(wd.parent, wd.name)
     url = info.get("webpage_url") or f"https://www.youtube.com/watch?v={info['id']}"
     if stage:

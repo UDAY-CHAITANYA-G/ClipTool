@@ -105,11 +105,11 @@ def cmd_serve(a: argparse.Namespace) -> int:
 
 
 def cmd_render(a: argparse.Namespace) -> int:
-    from . import render, report
+    from . import pipeline, render, report
     from .cache import Work
 
     data = json.loads((a.folder / "clips.json").read_text(encoding="utf-8"))
-    work_dir = Path(data["settings"]["work_dir"])
+    work_dir = pipeline.resolve_work_dir(data)
     work = Work(work_dir.parent, work_dir.name)
     source = next((p for p in work.dir.glob("source.*") if p.suffix in (".mp4", ".mkv", ".webm")), None)
     if not source:

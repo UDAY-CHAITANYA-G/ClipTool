@@ -18,9 +18,10 @@ def rows(run_dir: Path) -> tuple[str, list[list]]:
     """(video title, rows) with each clip's final upload description."""
     from . import assets, description
     from .cache import Work
+    from .pipeline import resolve_work_dir
 
     data = json.loads((run_dir / "clips.json").read_text(encoding="utf-8"))
-    wd = Path(data["settings"]["work_dir"])
+    wd = resolve_work_dir(data)
     work = Work(wd.parent, wd.name)
     info = work.load("info.json") if work.has("info.json") else dict(data["video"])
     if work.has("info.json"):

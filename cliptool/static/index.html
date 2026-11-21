@@ -296,6 +296,9 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
             <option value="">★ Preset to all clips…</option>
           </select>
           <button type="button" id="openfull" class="fullbtn" hidden title="Watch the whole video, search what's said, and cut your own clips">▶ Full video – make clips</button>
+          <div class="viewseg sortseg" role="group" aria-label="Clip order">
+            <button type="button" data-sort="time" aria-pressed="true" title="In the order they happen in the video">⏱ Timeline</button><button type="button" data-sort="best" aria-pressed="false" title="Best score first">★ Best</button>
+          </div>
           <div class="viewseg" role="group" aria-label="Clip view">
             <button type="button" data-view="grid" aria-pressed="true">▦ Grid</button><button type="button" data-view="list" aria-pressed="false">☰ List</button>
           </div>
@@ -559,7 +562,23 @@ function setView(v){
   document.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
   try { localStorage.setItem("cliptool-view", v); } catch {}
 }
-document.querySelector(".viewseg").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
+/* Clip order: timeline (start time in the video) or best first (rank). Remembered. */
+let clipSort = "time";
+try { clipSort = localStorage.getItem("cliptool-sort") || "time"; } catch {}
+function sortedClips(clips){
+  return [...clips].sort(clipSort === "time" ? (a, b) => a.start - b.start || a.rank - b.rank : (a, b) => a.rank - b.rank);
+}
+function setSort(v){
+  clipSort = v;
+  document.querySelectorAll("[data-sort]").forEach(b => b.setAttribute("aria-pressed", b.dataset.sort === v));
+  try { localStorage.setItem("cliptool-sort", v); } catch {}
+}
+setSort(clipSort);
+document.querySelector(".sortseg").addEventListener("click", e => {
+  const b = e.target.closest("[data-sort]"); if (!b || b.dataset.sort === clipSort) return;
+  setSort(b.dataset.sort); if (currentFolder) openRun(currentFolder);
+});
+document.querySelector(".viewseg:not(.sortseg)").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
 try { setView(localStorage.getItem("cliptool-view") || "grid"); } catch { setView("grid"); }
 
 const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -608,7 +627,7 @@ async function openRun(folder){
   checkSource(folder);
   $("rtitle").textContent = d.video.title;
   $("rsub").innerHTML = `${esc(d.video.channel || "")} · ${d.clips.length} clips · <a href="${esc(d.video.webpage_url)}" target="_blank" rel="noopener">source video</a>`;
-  $("grid").innerHTML = d.clips.map(c => card(c, folder, d.settings.aspect)).join("");
+  $("grid").innerHTML = sortedClips(d.clips).map(c => card(c, folder, d.settings.aspect)).join("");
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
   $("openfull").hidden = false;

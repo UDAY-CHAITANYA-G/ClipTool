@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from . import assets, pipeline, render, userpresets
+from . import assets, favorites, pipeline, render, userpresets
 from .fetch import video_id_from_url
 
 STATIC = Path(__file__).parent / "static"
@@ -308,6 +308,74 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- routes --------------------------------------------------------
     # ---- watermark images + settings ------------------------------------
+    def _body(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(n) or b"{}") or {}
+
+    def _favs_route(self, path: str, method: str) -> bool:
+        """Favorite folders: list / create / rename / delete, view, add clips, remove a clip, download list."""
+        try:
+            if path == "/api/favs":
+                if method == "GET":
+                    self._json({"folders": favorites.list_folders(), "root": str(favorites.root())})
+                elif method == "POST":
+                    self._json(favorites.create(self._body().get("name")), HTTPStatus.CREATED)
+                else:
+                    self._error("not allowed", HTTPStatus.METHOD_NOT_ALLOWED)
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)/export\.(xlsx|csv)", path)
+            if m and method == "GET":
+                from . import export
+
+                table = favorites.export_rows(m.group(1))
+                body = export.to_xlsx(table, m.group(1)) if m.group(2) == "xlsx" else export.to_csv(table)
+                ctype = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if m.group(2) == "xlsx"
+                         else "text/csv; charset=utf-8")
+                from .render import slugify
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition", f'attachment; filename="{slugify(m.group(1)) or "favorites"}_clips.{m.group(2)}"')
+                self.end_headers()
+                self.wfile.write(body)
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)/items/([A-Za-z0-9_-]+)", path)
+            if m and method == "DELETE":
+                self._json(favorites.remove(m.group(1), m.group(2)))
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)/add", path)
+            if m and method == "POST":
+                body = self._body()
+                run = _run_dir(str(body.get("folder") or ""))
+                if not run:
+                    self._error("That run is gone.", HTTPStatus.NOT_FOUND)
+                    return True
+                name = m.group(1)
+                if body.get("create") and name not in {f["name"] for f in favorites.list_folders()}:
+                    name = favorites.create(name)["name"]
+                self._json(favorites.add(name, run, [int(r) for r in body.get("ranks") or []]))
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)/rename", path)
+            if m and method == "POST":
+                self._json(favorites.rename(m.group(1), self._body().get("to")))
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)", path)
+            if m and method == "GET":
+                self._json(favorites.items(m.group(1)))
+                return True
+            if m and method == "DELETE":
+                self._json(favorites.delete(m.group(1)))
+                return True
+            self._error("not found", HTTPStatus.NOT_FOUND)
+        except FileNotFoundError as e:
+            self._error(str(e), HTTPStatus.NOT_FOUND)
+        except PermissionError:
+            self._error("A video in that folder is open (playing). Close it and try again.", HTTPStatus.CONFLICT)
+        except (ValueError, TypeError) as e:
+            self._error(str(e) or "invalid request")
+        return True
+
     def _assets_route(self, method: str) -> bool:
         """Handle /api/watermarks, /wm/<name> and /api/settings. Returns True if handled."""
         path = unquote(urlparse(self.path).path)
@@ -342,6 +410,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._error(str(e))
             return True
+        if path.startswith("/api/favs"):
+            return self._favs_route(path, method)
         if path == "/api/user-presets" and method == "GET":
             self._json({"presets": userpresets.list_all(), "last": userpresets.LAST})
             return True
@@ -386,8 +456,16 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if path == "/api/open" and method == "POST":
             n = int(self.headers.get("Content-Length") or 0)
-            which = (json.loads(self.rfile.read(n) or b"{}") or {}).get("which")
+            body = json.loads(self.rfile.read(n) or b"{}") or {}
+            which = body.get("which")
             target = {"output": OUTPUT, "work": WORK, "watermarks": assets.WATERMARKS}.get(which)
+            if which == "favorites":
+                target = favorites.root()
+            elif which == "fav":
+                try:
+                    target = favorites.root() / favorites.clean_name(body.get("name"))
+                except ValueError:
+                    target = None
             if not target:
                 self._error("unknown folder")
                 return True
@@ -683,6 +761,10 @@ class Handler(BaseHTTPRequestHandler):
             p = next((q for q in (WORK / m.group(1)).glob("source.*")
                       if q.suffix in (".mp4", ".webm", ".mkv")), None) if (WORK / m.group(1)).is_dir() else None
             return self._file(p) if p else self._error("not found", HTTPStatus.NOT_FOUND)
+        m = re.fullmatch(r"/favfile/(.+)", path)
+        if m:
+            p = favorites.file_path(m.group(1))
+            return self._file(p, download="download=1" in (url.query or "")) if p else self._error("not found", HTTPStatus.NOT_FOUND)
         m = re.fullmatch(r"/files/(.+)", path)
         if m:
             p = _safe_join(OUTPUT, m.group(1))

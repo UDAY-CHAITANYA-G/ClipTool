@@ -112,6 +112,7 @@ details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10
   border-radius:10px;background:color-mix(in srgb,#f59e0b 10%,transparent);font-size:13px}
 .srcwarn[hidden]{display:none}
 .srcwarn button{font-size:12.5px;padding:5px 10px;border-color:#f59e0b;color:#f59e0b;font-weight:650}
+.actions .favstar{color:#eab308;font-size:15px;line-height:1}
 .exportwrap{position:relative}
 .exportbtn{font-size:12.5px;padding:5px 10px;font-weight:650;border-color:var(--good);color:var(--good)}
 .exportmenu{position:absolute;top:calc(100% + 4px);left:0;z-index:30;min-width:180px;background:var(--panel);border:1px solid var(--line);
@@ -221,12 +222,14 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
 </style>
 <link rel="stylesheet" href="/static/editor.css">
 <link rel="stylesheet" href="/static/fullvideo.css">
+<link rel="stylesheet" href="/static/favorites.css">
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="logo">✂</div>
     <div><h1>ClipTool</h1><p>Paste a YouTube link. Get the best moments as ready-to-post shorts. Runs fully on this computer.</p></div>
+    <button type="button" class="gear favbtn" id="open-favs" title="Your favorite folders: clips you saved">★ <span>Favorites</span><span class="favn"></span></button>
     <button type="button" class="gear" id="open-settings" aria-haspopup="dialog" title="Settings: logos and storage folders">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
       <span>Settings</span><span class="gear-dot" id="gear-dot" hidden title="Logos are on"></span>
@@ -314,6 +317,12 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
       </div>
       <p class="sub" id="rsub"></p>
       <div class="srcwarn" id="srcwarn" hidden></div>
+      <div class="selbar" id="selbar" hidden role="region" aria-label="Selected clips">
+        <span><b id="selcount">0</b> selected</span>
+        <button type="button" class="primary" id="selsave" data-favpick>★ Save to folder</button>
+        <button type="button" id="selall">Select all</button>
+        <button type="button" id="selnone">Clear</button>
+      </div>
       <div class="grid" id="grid"></div>
       <div class="empty" id="empty">No clips yet. Paste a link above, or open a previous run on the right.</div>
     </section>
@@ -599,8 +608,9 @@ function card(c, folder, aspect){
     ? `<video controls preload="metadata" playsinline poster="${c.thumbnail ? base + esc(c.thumbnail) : ""}" src="${base + esc(c.file)}" aria-label="Clip ${c.rank}: ${esc(c.title)}"></video>`
     : `<div class="nofile">Not rendered</div>`;
   const outLen = c.speed && c.speed !== 1 ? c.duration / c.speed : c.duration;
-  return `<article class="card ar-${esc(c.aspect || aspect)}">
-    <div class="media"><span class="rank">#${c.rank}</span>${media}</div>
+  return `<article class="card ar-${esc(c.aspect || aspect)}${PICKED.has(c.rank) ? " picked" : ""}" data-rank="${c.rank}">
+    <div class="media"><span class="rank">#${c.rank}</span>${media}
+      ${c.file ? `<label class="pick" title="Select (to save several clips to a folder at once)"><input type="checkbox" data-pick="${c.rank}" ${PICKED.has(c.rank) ? "checked" : ""} aria-label="Select clip ${c.rank}"></label>` : ""}</div>
     <div class="body">
     <h3 title="${esc(c.title)}">${esc(c.title)}</h3>
     <div class="cardtop"><a href="${esc(c.source_url)}" target="_blank" rel="noopener" title="Open this moment on YouTube">${fmt(c.start)}–${fmt(c.end)}</a>
@@ -610,6 +620,7 @@ function card(c, folder, aspect){
       <p class="hook">“${esc(c.hook)}”</p><p>${esc(c.reason)}</p><div class="chips">${sig}</div></details>
     <div class="actions">
       <button type="button" class="edit" data-edit="${c.rank}" title="Edit this clip">${ICON.edit}Edit</button>
+      ${c.file ? `<button type="button" class="favstar" data-fav="${c.rank}" data-favpick title="Save to a favorites folder" aria-label="Save clip ${c.rank} to a folder">★</button>` : ""}
       ${c.file ? `<a href="${base + esc(c.file)}?download=1" title="Download MP4" aria-label="Download">${ICON.down}</a>` : ""}
       <button type="button" data-desc="${c.rank}" title="Copy upload description (credit + links)" aria-label="Copy description">${ICON.desc}</button>
       <button type="button" data-copy="${esc(c.title)}" title="Copy title" aria-label="Copy title">${ICON.copy}</button>
@@ -619,6 +630,7 @@ function card(c, folder, aspect){
 }
 
 async function openRun(folder){
+  if (folder !== currentFolder) PICKED.clear();
   currentFolder = folder;
   document.querySelectorAll(".library .item").forEach(el => el.classList.toggle("sel", el.dataset.folder === folder));
   const r = await fetch("/api/library/" + encodeURIComponent(folder)); if (!r.ok) return;
@@ -627,7 +639,9 @@ async function openRun(folder){
   checkSource(folder);
   $("rtitle").textContent = d.video.title;
   $("rsub").innerHTML = `${esc(d.video.channel || "")} · ${d.clips.length} clips · <a href="${esc(d.video.webpage_url)}" target="_blank" rel="noopener">source video</a>`;
+  for (const r of [...PICKED]) if (!d.clips.some(c => c.rank === r && c.file)) PICKED.delete(r);
   $("grid").innerHTML = sortedClips(d.clips).map(c => card(c, folder, d.settings.aspect)).join("");
+  updateSelbar();
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
   $("openfull").hidden = false;
@@ -638,7 +652,34 @@ async function openRun(folder){
   if (WM.all) renderWmRows();
 }
 
+/* Favorites: tick clips, save them to a folder; ★ on a card saves just that clip. */
+const PICKED = new Set();
+function updateSelbar(){
+  $("selbar").hidden = !PICKED.size;
+  $("selcount").textContent = PICKED.size;
+  document.querySelectorAll("#grid .card").forEach(el => el.classList.toggle("picked", PICKED.has(+el.dataset.rank)));
+}
+$("grid").addEventListener("change", e => {
+  const cb = e.target.closest("[data-pick]"); if (!cb) return;
+  cb.checked ? PICKED.add(+cb.dataset.pick) : PICKED.delete(+cb.dataset.pick);
+  updateSelbar();
+});
+$("selall").addEventListener("click", () => {
+  (currentRun ? currentRun.clips : []).filter(c => c.file).forEach(c => PICKED.add(c.rank));
+  document.querySelectorAll("#grid [data-pick]").forEach(cb => { cb.checked = true; });
+  updateSelbar();
+});
+$("selnone").addEventListener("click", () => { PICKED.clear(); document.querySelectorAll("#grid [data-pick]").forEach(cb => { cb.checked = false; }); updateSelbar(); });
+$("selsave").addEventListener("click", async e => {
+  if (!PICKED.size) return;
+  const ranks = [...PICKED].sort((a, b) => a - b);
+  const r = await Fav.pick(e.currentTarget, { ranks, now: { folder: currentFolder, ranks } });
+  if (r) { PICKED.clear(); document.querySelectorAll("#grid [data-pick]").forEach(cb => { cb.checked = false; }); updateSelbar(); }
+});
+$("open-favs").addEventListener("click", () => Fav.open());
 $("grid").addEventListener("click", e => {
+  const star = e.target.closest("[data-fav]");
+  if (star) { const rank = +star.dataset.fav; Fav.pick(star, { ranks: [rank], label: `Save clip #${rank} to…`, now: { folder: currentFolder, ranks: [rank] } }); return; }
   const del = e.target.closest("[data-delclip]");
   if (del) {
     const c = currentRun.clips.find(x => x.rank === +del.dataset.delclip);
@@ -973,5 +1014,6 @@ renderWmRows = function(){ _renderWmRows(); renderLogoStatus(); };
 </script>
 <script src="/static/editor.js"></script>
 <script src="/static/fullvideo.js"></script>
+<script src="/static/favorites.js"></script>
 </body>
 </html>

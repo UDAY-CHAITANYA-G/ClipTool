@@ -42,3 +42,8 @@
 .fv-line:hover .fv-acts,.fv-line:focus-within .fv-acts{opacity:1}
 .fv-acts button{font-size:11px;padding:2px 6px}
 @media (max-width:900px){.fv-main{grid-template-columns:1fr;grid-template-rows:auto minmax(260px,40vh)}.fv{overflow:auto}}
+/* never wider than the window: a long video title shrinks with an ellipsis */
+.fv{grid-template-columns:minmax(0,1fr)}
+.fv-top{min-width:0}
+.fv-title{flex:1;min-width:0}
+@media (max-width:900px){.fv-main{grid-template-columns:minmax(0,1fr)}}

@@ -229,7 +229,7 @@ def delete_image(name: str) -> bool:
     return True
 
 
-DEFAULT_PATHS = {"output": "output", "work": "work"}  # relative to the project folder
+DEFAULT_PATHS = {"output": "output", "work": "work", "favorites": "favorites"}  # relative to the project folder
 
 
 def load_settings() -> dict:
@@ -311,7 +311,7 @@ def with_defaults(images: list[dict] | None) -> list[dict]:
 # ---- storage folders ---------------------------------------------------------
 
 def folder(kind: str) -> Path:
-    """Where downloaded videos ("work") or finished clips ("output") are stored."""
+    """Where downloaded videos ("work"), finished clips ("output") or favorite folders ("favorites") are stored."""
     custom = load_settings()["paths"].get(kind)
     return Path(custom).resolve() if custom else Path(DEFAULT_PATHS[kind]).resolve()
 

@@ -93,6 +93,17 @@ on a clip made before this fix to get the corrected captions.
 description), video file name and real length as an **Excel table (.xlsx)** - header row, wrapped text, filters - or as
 **CSV**. Works without Excel add-ons; the file opens in Excel, Google Sheets or LibreOffice.
 
+**★ Favorites (your own folders):** keep the clips you like in folders of your own.
+- *Save from a run:* tick the box on clip cards (or **Select all**) and press **★ Save to folder**, or press **★** on one
+  card. Pick a folder or type a new name.
+- *Save from the full video:* choose **★ Save to: <folder>** next to **Create clip** - the new clip goes into that folder
+  as soon as it's rendered. Click a clip marker on the bar to save an existing clip (**★ Save to folder**).
+- *See them:* **★ Favorites** (top right) lists your folders; open one to play its clips, copy each title or upload
+  description, download the MP4, download the folder's list (.xlsx / CSV), rename, delete, or open it in Explorer.
+- Each folder is a real folder in `favorites/` holding **copies** of the clip videos and thumbnails plus
+  `favorites.json` (title, description, source), so saved clips stay even if you delete the run. Saving a clip
+  again replaces its copy with the newest render.
+
 **Clip order:** **⏱ Timeline** (default) shows clips in the order they happen in the video; **★ Best** shows the highest score first (remembered).
 
 **Grid / List:** the switch above the clips shows them as cards or as one row per clip (remembered).

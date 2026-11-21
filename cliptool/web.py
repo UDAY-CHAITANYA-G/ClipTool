@@ -518,6 +518,29 @@ class Handler(BaseHTTPRequestHandler):
             generated = description.for_clip(info, {**clip, "description": None}, settings)
             return self._json({"text": description.for_clip(info, clip, settings), "generated": generated,
                                "custom": bool(clip.get("description"))})
+        m = re.fullmatch(r"/api/runs/([^/]+)/export\.(xlsx|csv)", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run or not (run / "clips.json").exists():
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from . import export
+            from .render import slugify
+
+            title, table = export.rows(run)
+            if m.group(2) == "xlsx":
+                body = export.to_xlsx(table)
+                ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else:
+                body, ctype = export.to_csv(table), "text/csv; charset=utf-8"
+            name = f"{slugify(title)[:60] or 'clips'}_clips.{m.group(2)}"
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         m = re.fullmatch(r"/api/runs/([^/]+)/source-info", path)
         if m:
             run = _run_dir(m.group(1))

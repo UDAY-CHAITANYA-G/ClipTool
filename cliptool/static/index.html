@@ -112,6 +112,13 @@ details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10
   border-radius:10px;background:color-mix(in srgb,#f59e0b 10%,transparent);font-size:13px}
 .srcwarn[hidden]{display:none}
 .srcwarn button{font-size:12.5px;padding:5px 10px;border-color:#f59e0b;color:#f59e0b;font-weight:650}
+.exportwrap{position:relative}
+.exportbtn{font-size:12.5px;padding:5px 10px;font-weight:650;border-color:var(--good);color:var(--good)}
+.exportmenu{position:absolute;top:calc(100% + 4px);left:0;z-index:30;min-width:180px;background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;padding:4px;box-shadow:0 10px 28px rgba(0,0,0,.3);display:flex;flex-direction:column}
+.exportmenu[hidden]{display:none}
+.exportmenu a{padding:7px 10px;border-radius:7px;color:var(--ink);text-decoration:none;font-size:13px}
+.exportmenu a:hover,.exportmenu a:focus{background:var(--soft)}
 .fullbtn{border-color:var(--accent);color:var(--accent);font-weight:650;font-size:12.5px;padding:5px 10px}
 .tag.mine{border-color:#a855f7;color:#a855f7}
 .viewseg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -292,6 +299,13 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
           <div class="viewseg" role="group" aria-label="Clip view">
             <button type="button" data-view="grid" aria-pressed="true">▦ Grid</button><button type="button" data-view="list" aria-pressed="false">☰ List</button>
           </div>
+          <div class="exportwrap" id="exportwrap" hidden>
+            <button type="button" id="exportbtn" class="exportbtn" aria-haspopup="menu" aria-expanded="false" title="Download No., title and upload description of every clip as a table">⬇ Download list</button>
+            <div class="exportmenu" id="exportmenu" role="menu" hidden>
+              <a role="menuitem" id="export-xlsx" download>Excel table (.xlsx)</a>
+              <a role="menuitem" id="export-csv" download>CSV (.csv)</a>
+            </div>
+          </div>
           <button type="button" class="danger" id="delrun" hidden>Delete this run</button>
         </div>
       </div>
@@ -389,6 +403,13 @@ async function checkSource(folder){
     };
   } catch (e) {}
 }
+
+/* Download list: No., title, description of every clip as an Excel table or CSV. */
+$("exportbtn").addEventListener("click", e => {
+  const m = $("exportmenu"), show = m.hidden; m.hidden = !show; e.currentTarget.setAttribute("aria-expanded", String(show));
+});
+document.addEventListener("click", e => { if (!e.target.closest("#exportwrap")) { $("exportmenu").hidden = true; $("exportbtn").setAttribute("aria-expanded", "false"); } });
+$("exportmenu").addEventListener("click", e => { if (e.target.closest("a")) { $("exportmenu").hidden = true; toast("Preparing your clip list…"); } });
 
 /* Your presets (saved from the editor's ★ Presets): picker for new runs + "apply to all clips" on a run. */
 let USER_PRESETS = [];
@@ -591,6 +612,9 @@ async function openRun(folder){
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
   $("openfull").hidden = false;
+  $("exportwrap").hidden = !d.clips.length;
+  $("export-xlsx").href = `/api/runs/${encodeURIComponent(folder)}/export.xlsx`;
+  $("export-csv").href = `/api/runs/${encodeURIComponent(folder)}/export.csv`;
   $("runpreset").hidden = !USER_PRESETS.length;
   if (WM.all) renderWmRows();
 }

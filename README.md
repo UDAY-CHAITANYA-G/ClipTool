@@ -89,6 +89,10 @@ Delete any single clip with the bin icon on its card.
 no longer run into the next one). Existing runs are re-read automatically; press **Save & render** (or re-run)
 on a clip made before this fix to get the corrected captions.
 
+**Download list:** on a run, **⬇ Download list** saves every clip's **No., Title, Description** (the final upload
+description), video file name and real length as an **Excel table (.xlsx)** - header row, wrapped text, filters - or as
+**CSV**. Works without Excel add-ons; the file opens in Excel, Google Sheets or LibreOffice.
+
 **Grid / List:** the switch above the clips shows them as cards or as one row per clip (remembered).
 
 **Deleting:** hover a previous run and press **×**, or open it and press **Delete this run** (removes its clips and

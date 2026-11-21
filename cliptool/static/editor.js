@@ -98,6 +98,7 @@
           <div class="ticks" id="ws-ticks"></div>
           <div class="sel" id="ws-sel"><div class="h l" data-h="start"></div><div class="h r" data-h="end"></div></div>
           <div class="hk" id="ws-hk" hidden title="Hook intro - plays first"></div>
+          <div class="cuts" id="ws-cuts"></div>
           <div class="ph" id="ws-ph"></div>
         </div>
         <div class="zlane" id="ws-zlane" title="Speed zones: drag on an empty spot to add one, drag a zone to move it, its edges to resize, click to change its speed">
@@ -114,17 +115,32 @@
   // ------------------------------------------------------------------ helpers
   const outSize = () => C.aspects[S.aspect].size;
   const ZSPEEDS = [0.25, 0.5, 0.75, 1.25, 1.5, 2, 3, 4];
-  function pieces(){
-    const out = [], end = S.end; let cur = S.start;
-    for (const z of [...(S.zones || [])].sort((a, b) => a.start - b.start)) {
-      const za = Math.max(z.start, cur), zb = Math.min(z.end, end);
-      if (zb - za < 0.05) continue;
-      if (za - cur > 0.02) out.push([cur, za, S.speed]);
-      out.push([za, zb, z.speed]); cur = zb;
+  function kept(){
+    const out = []; let cur = S.start;
+    for (const c of [...(S.cuts || [])].sort((a, b) => a.start - b.start)) {
+      const ca = Math.max(c.start, cur), cb = Math.min(c.end, S.end);
+      if (cb - ca < 0.05) continue;
+      if (ca - cur > 0.02) out.push([cur, ca]);
+      cur = Math.max(cur, cb);
     }
-    if (end - cur > 0.02) out.push([cur, end, S.speed]);
+    if (S.end - cur > 0.02) out.push([cur, S.end]);
     return out;
   }
+  function pieces(){
+    const out = [];
+    for (const [ka, kb] of kept()) {
+      let cur = ka;
+      for (const z of [...(S.zones || [])].sort((a, b) => a.start - b.start)) {
+        const za = Math.max(z.start, cur), zb = Math.min(z.end, kb);
+        if (zb - za < 0.05) continue;
+        if (za - cur > 0.02) out.push([cur, za, S.speed]);
+        out.push([za, zb, z.speed]); cur = zb;
+      }
+      if (kb - cur > 0.02) out.push([cur, kb, S.speed]);
+    }
+    return out;
+  }
+  const cutAt = src => (S.cuts || []).find(c => src >= c.start && src < c.end);
   const outDur = () => pieces().reduce((t, [a, b, sp]) => t + (b - a) / sp, 0);
   function srcToOut(src){
     let t = 0;
@@ -135,6 +151,16 @@
     let t = 0;
     for (const [a, b, sp] of pieces()) { const d = (b - a) / sp; if (o <= t + d) return a + (o - t) * sp; t += d; }
     return S.end;
+  }
+  function mergeCuts(cs){
+    const out = [];
+    for (const c of [...cs].sort((a, b) => a.start - b.start)) {
+      const a = Math.max(S.start, c.start), b = Math.min(S.end, c.end);
+      if (b - a < 0.1) continue;
+      if (out.length && a <= out[out.length - 1].end + 0.05) out[out.length - 1].end = Math.max(out[out.length - 1].end, b);
+      else out.push({ start: +a.toFixed(2), end: +b.toFixed(2) });
+    }
+    return out;
   }
   const zoneAt = src => (S.zones || []).find(z => src >= z.start && src < z.end);
   const video = () => el("ws-video");
@@ -387,6 +413,10 @@
     const total = outDur() + hookLen() / S.speed;
     el("ws-tl-l").textContent = `Clip ${fmt(S.start)} – ${fmt(S.end)} · ${d.toFixed(1)} s source → ${total.toFixed(1)} s output` +
       (hookOn() ? ` (incl. ${(hookLen() / S.speed).toFixed(1)} s hook)` : "");
+    el("ws-cuts").innerHTML = (S.cuts || []).map((c, i) => `<button type="button" class="cut" data-act="delcut" data-v="${i}"
+        style="left:${pct(c.start)}%;width:${Math.max(0.5, (c.end - c.start) / span * 100)}%"
+        title="Cut out ${fmt(c.start)}–${fmt(c.end)} (${(c.end - c.start).toFixed(1)} s) - click to put it back" aria-label="Restore cut part ${i + 1}">✕</button>`).join("")
+      + (X.cutA != null ? `<div class="cutmark" style="left:${pct(X.cutA)}%" title="Cut starts here - move the playhead and press 'Cut to here'"></div>` : "");
     const hk = el("ws-hk");
     if (hookOn()) { hk.hidden = false; hk.style.left = pct(S.hookIntro.start) + "%"; hk.style.width = Math.max(0.4, (S.hookIntro.end - S.hookIntro.start) / span * 100) + "%"; }
     else hk.hidden = true;
@@ -520,6 +550,23 @@
             <button type="button" data-act="sethere" data-k="${k}">Set here</button>
             <button type="button" data-act="snap" data-k="${k}">Snap</button></div></div>`).join("")}
         <p class="note">Drag the orange handles on the timeline too. "Snap" moves to the nearest sentence edge.</p>
+        <h3>Cut &amp; split</h3>
+        <p class="note" style="margin-top:0">Remove a part: put the playhead where it starts, press <b>Cut from here</b>, move to
+          where it ends and press <b>Cut to here</b>. Cut parts show in red on the timeline - click one to put it back.</p>
+        <div class="btnrow">
+          <button type="button" data-act="cutfrom">${X.cutA != null ? "⟦ Move cut start here" : "⟦ Cut from here"}</button>
+          <button type="button" class="${X.cutA != null ? "primary" : ""}" data-act="cutto" ${X.cutA != null ? "" : "disabled"}>Cut to here ⟧ 🗑</button>
+          ${X.cutA != null ? '<button type="button" data-act="cutcancel">Cancel</button>' : ""}
+        </div>
+        <div class="btnrow">
+          <button type="button" data-act="autocuts" title="Find dead air (no speech, quiet) and cut it out">Auto: remove silent parts</button>
+          <button type="button" data-act="split" title="Make two clips: this one ends at the playhead, a new one starts there">✂ Split at playhead</button>
+        </div>
+        ${(S.cuts || []).length ? `<div class="tlist">${S.cuts.map((c, i) => `<div class="zitem cutitem">
+          <span class="tt">🗑 ${fmt(c.start)}–${fmt(c.end)} · ${(c.end - c.start).toFixed(1)} s</span>
+          <button type="button" data-act="playcut" data-v="${i}" title="Hear what was cut">▶</button>
+          <button type="button" data-act="delcut" data-v="${i}" title="Put this part back" aria-label="Put back">↺</button></div>`).join("")}
+          <button type="button" class="danger" data-act="clearcuts">Put all back</button></div>` : ""}
         <h3>Hook intro</h3>
         <p class="note" style="margin-top:0">Plays the most gripping 3-5 s first, then the clip from its start.</p>
         <label class="fld chk"><input type="checkbox" data-act-check="hookon" ${hookOn() ? "checked" : ""}> Start with a hook</label>
@@ -797,6 +844,44 @@
       mutate("zones", () => { S.zones = [...(S.zones || []), z].sort((a, b) => a.start - b.start); });
       openZonePop(z);
     },
+    cutfrom: () => { X.cutA = +clamp(video().currentTime, S.start, S.end).toFixed(2); renderPanel(); refresh(); },
+    cutcancel: () => { X.cutA = null; renderPanel(); refresh(); },
+    cutto: () => {
+      if (X.cutA == null) return;
+      let a = X.cutA, b = +clamp(video().currentTime, S.start, S.end).toFixed(2);
+      if (b < a) [a, b] = [b, a];
+      if (b - a < 0.1) { toast("Move the playhead to where the cut part ends first."); return; }
+      X.cutA = null;
+      mutate("cuts", () => { S.cuts = mergeCuts([...(S.cuts || []), { start: a, end: b }]); });
+      if (outDur() < 1) { undo(); toast("That would cut out almost everything."); return; }
+      toast(`Cut out ${(b - a).toFixed(1)} s - output is now ${outDur().toFixed(1)} s`);
+    },
+    delcut: v => mutate("cuts", () => { S.cuts.splice(+v, 1); }),
+    clearcuts: () => mutate("cuts", () => { S.cuts = []; }),
+    playcut: v => { const c = S.cuts[+v], vd = video(); if (!c) return; X.phase = "main"; X.cutPreview = c; vd.currentTime = Math.max(S.start, c.start - 1); vd.play(); },
+    autocuts: async () => {
+      const b = document.querySelector('#ws [data-act="autocuts"]'); if (b) { b.disabled = true; b.textContent = "Listening…"; }
+      try {
+        const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/silences?start=${S.start}&end=${S.end}`);
+        const d = await r.json();
+        if (!r.ok || !d.zones.length) { toast(d.error || "No silent parts found in this clip."); renderPanel(); return; }
+        // keep a little breathing room at each edge so speech isn't clipped
+        const add = d.zones.map(z => ({ start: +(z.start + 0.15).toFixed(2), end: +(z.end - 0.15).toFixed(2) })).filter(z => z.end - z.start >= 0.3);
+        mutate("cuts", () => { S.cuts = mergeCuts([...(S.cuts || []), ...add]); });
+        toast(`Cut out ${add.length} silent part${add.length > 1 ? "s" : ""} (${add.reduce((t, z) => t + z.end - z.start, 0).toFixed(1)} s)`);
+      } finally { const b2 = document.querySelector('#ws [data-act="autocuts"]'); if (b2) { b2.disabled = false; b2.textContent = "Auto: remove silent parts"; } }
+    },
+    split: async () => {
+      const at = +video().currentTime.toFixed(2);
+      if (at < S.start + 1 || at > S.end - 1) { toast("Put the playhead inside the clip (at least 1 s from each end) first."); return; }
+      if (!confirm(`Split clip #${X.rank} at ${fmt(at)}?\n\nThis clip will end at ${fmt(at)}, and a new clip “${S.title.slice(0, 50)} (part 2)” will start there.${dirty ? "\nYour unsaved changes go on both halves." : ""} Both are rendered.`)) return;
+      releaseVideos();
+      const r = await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/split`, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at, changes: bodyFromState() }) });
+      const d = await r.json();
+      if (!r.ok) { toast(d.error || "Couldn't split the clip."); return; }
+      close(true); toast(`Split into #${d.ranks[0]} and #${d.ranks[1]} - rendering both`); poll(d.jobs[0]); openRun(X.folder);
+    },
     delzone: v => mutate("zones", () => { S.zones.splice(+v, 1); el("ws-zpop").hidden = true; }),
     clearzones: () => mutate("zones", () => { S.zones = []; el("ws-zpop").hidden = true; }),
     spdstep: v => {
@@ -999,6 +1084,11 @@
     const tick = () => {
       if (!X.open) return;
       if (X.phase === "hook" && v.currentTime >= S.hookIntro.end) { X.phase = "main"; v.currentTime = S.start; }
+      if (!v.paused && X.phase !== "hook") {
+        const c = cutAt(v.currentTime);
+        if (X.cutPreview && v.currentTime > X.cutPreview.end + 0.5) { X.cutPreview = null; v.pause(); }
+        else if (c && c !== X.cutPreview) v.currentTime = Math.min(c.end + 0.01, S.end);
+      }
       if (!v.paused) { const z = X.phase === "hook" ? null : zoneAt(v.currentTime), r = z ? z.speed : S.speed; if (Math.abs(v.playbackRate - r) > 1e-3) v.playbackRate = r; }
       else if (!v.paused && v.currentTime >= S.end) { v.pause(); v.currentTime = S.end; X.phase = "main"; }
       refresh();
@@ -1014,6 +1104,7 @@
     let tdrag = null;
     const tAt = (e, node) => { const r = node.getBoundingClientRect(); return X.lo + clamp((e.clientX - r.left) / r.width, 0, 1) * (X.hi - X.lo); };
     track.addEventListener("pointerdown", e => {
+      if (e.target.closest(".cut")) return;  // a click on a cut part puts it back (handled as a button click)
       const h = e.target.closest("[data-h]");
       track.setPointerCapture(e.pointerId);
       if (h) { tdrag = { k: h.dataset.h }; hist.push(JSON.stringify(S)); fut = []; lastKey = ""; }
@@ -1140,7 +1231,7 @@
   }
 
   // ------------------------------------------------------------------ open / close / save
-  async function open(folder, rank){
+  async function open(folder, rank, opts = {}){
     buildDom();
     if (!C) C = await (await fetch("/api/presets")).json();
     const clip = currentRun.clips.find(c => c.rank === rank);
@@ -1148,7 +1239,7 @@
     const d = await r.json();
     if (!r.ok) { toast(d.error || "Can't edit this clip."); return; }
     const st = clip.style || {}, preset = C.presets[st.preset] ? st.preset : "highlight", p = C.presets[preset];
-    X = { open: true, folder, rank, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
+    X = { open: true, folder, rank, fav: opts.fav || null, cutA: null, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
           lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null, selImg: null };
     if (!WM.all) await loadWatermarks();
     X.dsettings = d.settings;
@@ -1184,6 +1275,7 @@
       hookIntro: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
       description: clip.description || null,
       zones: (clip.speed_zones || []).map(z => ({ ...z })),
+      cuts: (clip.cuts || []).map(c => ({ ...c })),
       volume: n(clip.volume, 1), mute: !!clip.mute, fade_in: n(clip.fade_in, 0), fade_out: n(clip.fade_out, 0),
       progress_bar: { on: false, color: "#FFD400", position: "bottom", ...(clip.progress_bar || {}) },
       cover_t: n(clip.cover_t, null), quality: clip.quality || "standard",
@@ -1271,6 +1363,7 @@
       style: S.style, texts: S.texts, images: S.images,
       hook_intro: S.hookIntro && S.hookIntro.start != null ? S.hookIntro : { on: false },
       speed_zones: (S.zones || []).map(({ start, end, speed }) => ({ start, end, speed })),
+      cuts: (S.cuts || []).map(({ start, end }) => ({ start, end })),
       description: S.description && X.desc && S.description.trim() === (X.desc.generated || "").trim() ? null : S.description, volume: S.volume, mute: S.mute, fade_in: S.fade_in, fade_out: S.fade_out,
       progress_bar: S.progress_bar, cover_t: S.cover_t, quality: S.quality,
     };
@@ -1281,6 +1374,7 @@
   async function save(){
     if (!S.title.trim() || !(S.hook || "").trim()) { toast("Title and hook can't be empty."); return; }
     const body = bodyFromState();
+    if (X.fav) body.fav = X.fav;  // opened from a favorites folder: its copy is updated after rendering
     const btn = document.querySelector('#ws [data-act="save"]');
     btn.disabled = true;
     try {

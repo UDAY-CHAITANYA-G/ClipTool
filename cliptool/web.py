@@ -122,7 +122,14 @@ def _edit_work(run: Path, rank: int, job: dict):
                 job["status"], job["stage"] = "running", job.get("start_stage") or job["stage"]
             if job["cancel"]:
                 raise pipeline.Cancelled()
-            return pipeline.edit_clip(run, rank, _merged_changes(job), log=log, stage=stage)
+            res = pipeline.edit_clip(run, rank, _merged_changes(job), log=log, stage=stage)
+            for name in sorted(job.get("favs") or ()):
+                try:  # edited from a favorites folder: put the new render in that folder too
+                    favorites.add(name, run, [rank])
+                    log(f"Updated the copy in favorites folder '{name}'.")
+                except (OSError, ValueError) as e:
+                    log(f"Couldn't update favorites folder '{name}': {e}")
+            return res
         finally:
             lock.release()
     return work
@@ -893,6 +900,33 @@ class Handler(BaseHTTPRequestHandler):
             with JOBS_LOCK:
                 _enqueue(job, work)
             return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/split", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            body = self._body()
+            ch = dict(body.get("changes") or {})
+            ch.pop("fav", None)
+            try:
+                with JOBS_LOCK:
+                    if any(j.get("folder") == run.name and j.get("rank") == int(m.group(2)) for j in _active()):
+                        return self._error("This clip is rendering; split it when it's done.", HTTPStatus.CONFLICT)
+                r1, r2 = pipeline.split_clip(run, int(m.group(2)), float(body.get("at")), ch)
+            except (ValueError, TypeError, KeyError) as e:
+                return self._error(str(e) or "Couldn't split the clip.")
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            ids = []
+            for r in (r1, r2):
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "edit", "folder": run.name, "rank": r, "status": "queued",
+                       "stage": f"Rendering clip #{r} (split)", "progress": 0.05, "log": [], "result": None,
+                       "error": None, "cancel": False, "preps": [lambda: {}]}
+                with JOBS_LOCK:
+                    job = _enqueue(job, _edit_work(run, r, job))
+                ids.append(job["id"])
+            return self._json({"ranks": [r1, r2], "jobs": ids}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/edit", path)
         if m:
             run = _run_dir(m.group(1))
@@ -912,8 +946,11 @@ class Handler(BaseHTTPRequestHandler):
             job = {"id": jid, "kind": "edit", "folder": run.name, "rank": rank, "status": "queued",
                    "stage": f"Re-rendering clip #{rank}", "progress": 0.05, "log": [], "result": None,
                    "error": None, "cancel": False, "preps": [lambda: changes]}
+            fav = str(changes.pop("fav", "") or "") if isinstance(changes, dict) else ""
             with JOBS_LOCK:
                 job = _enqueue(job, _edit_work(run, rank, job))
+                if fav:
+                    job.setdefault("favs", set()).add(fav)
             return self._json({"id": job["id"], "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/jobs/([a-f0-9]+)/cancel", path)
         if m:

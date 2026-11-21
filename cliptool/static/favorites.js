@@ -156,6 +156,8 @@
             <h4 title="${esc(i.title)}">${esc(i.title)}</h4>
             <p class="favnote" title="${esc(i.video_title || "")}">${esc(i.channel || "")} · ${i.source_url ? `<a href="${esc(i.source_url)}" target="_blank" rel="noopener">${fmt(i.start)}–${fmt(i.end)}</a>` : `${fmt(i.start)}–${fmt(i.end)}`} · ${i.size_mb} MB</p>
             <div class="fav-acts">
+              ${i.editable ? `<button type="button" class="favedit" data-fa="edit" data-key="${esc(i.key)}" title="Edit this clip (trim, cut out parts, captions, logos...). Saving updates the copy in this folder.">✎ Edit</button>`
+                : `<button type="button" disabled title="Its original run was deleted, so it can't be re-edited. You can still play and download it.">✎ Edit</button>`}
               <a href="${base + enc(i.file)}?download=1" title="Download MP4" aria-label="Download">⬇</a>
               <button type="button" data-fa="cdesc" data-key="${esc(i.key)}" title="Copy upload description">Description</button>
               <button type="button" data-fa="ctitle" data-key="${esc(i.key)}" title="Copy title">Title</button>
@@ -164,7 +166,7 @@
           </div>
         </article>`).join("")}</div>`
         : `<div class="fav-empty"><p>This folder is empty.</p><p class="favnote">Open a run, tick clips and press <b>★ Save to folder</b>.</p></div>`}`;
-    $("fav-content").dataset.items = JSON.stringify(d.items.map(i => ({ key: i.key, title: i.title, description: i.description })));
+    $("fav-content").dataset.items = JSON.stringify(d.items.map(i => ({ key: i.key, title: i.title, description: i.description, run: i.run, rank: i.rank })));
   }
   async function onClick(e){
     const b = e.target.closest("[data-fa]"); if (!b) return;
@@ -197,6 +199,14 @@
         stopVideos();
         await api(`/api/favs/${enc(CUR)}/items/${enc(b.dataset.key)}`, { method: "DELETE" });
         await folders(); showFolder(CUR);
+      }
+      else if (act === "edit") {
+        const i = item(); if (!i) return;
+        const name = CUR; close();
+        await openRun(i.run);
+        if (!currentRun || !currentRun.clips.some(c => c.rank === i.rank)) { toast("That clip isn't in its run any more."); return; }
+        await openEditor(i.run, i.rank, { fav: name });
+        toast(`Editing “${i.title}” - Save & render also updates the copy in “${name}”`);
       }
       else if (act === "cdesc") { const i = item(); if (i) copy(i.description); }
       else if (act === "ctitle") { const i = item(); if (i) copy(i.title); }

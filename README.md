@@ -35,6 +35,7 @@ and these tools on the left:
 | **Layout** | Ratio **9:16 / 4:5 / 1:1 / 16:9**. Templates: **Auto** (follows the action), **Crop to fill** (zoom, drag the visible area), **Full + blur** / **Full + black** (whole 16:9 frame inside, with zoom), **Facecam + game**. |
 | **Facecam + game** | Split presets (Cam 1/4, 1/3, 44%, half, 60%) or a custom height. Put the cam on top or bottom. The facecam is auto-detected; drag or resize its box. Drag and zoom the game area. |
 | **Trim** | Drag the handles on the timeline, nudge ±0.5 s, "Set here", or snap to a sentence edge. Speed 0.5×–2× (captions and text stay in sync) - also as the **− [speed] +** control next to Play, and as **Speed** on the main form for new runs (`--speed 1.25`). |
+| **Cut & split** (in Trim) | **Delete parts of a clip:** put the playhead where the part starts, **Cut from here**, move to where it ends, **Cut to here**. Cut parts show red on the timeline (click one, or ↺ in the list, to put it back; ▶ plays what was cut). **Auto: remove silent parts** cuts dead air. The preview skips cut parts; captions said in them are dropped. **✂ Split at playhead** makes two clips: this one ends at the playhead and a new "(part 2)" clip starts there, both rendered. |
 | **Speed zones** (timeline) | The timeline shows the audio **waveform**. Under it, a speed lane: drag to mark a part, then pick 0.25×–4× - orange zones speed up (skip boring bits), blue zones slow down (slow-mo for big moments). Drag zones to move, edges to resize. **Auto: speed up silent parts** finds dead air (no speech, quiet audio) and makes it 2×. The preview plays each zone at its speed; captions, text, logos and the hook follow the new timing. |
 | **Hook intro** (in Trim) | Start the clip with its most gripping 3-5 s, then play it from the beginning. **Find best hook** scores every word-aligned 3-5 s stretch inside the clip on replay heatmap, loudness / reactions, strong words and whether it opens and closes a thought; adjust start/end at the playhead and preview hook + clip. The main form's **Hook intro** box does this for every new clip (`--hook-intro` on the command line). |
 | **Text** | Add Title / Label / Call-to-action / Watermark boxes, as many as you like. Each has its own font, size, colour, bold/italic, outline, shadow, background box and animation (fade, pop). Drag it on the preview; set its timing or drag its bar on the timeline. |
@@ -100,6 +101,8 @@ description), video file name and real length as an **Excel table (.xlsx)** - he
   as soon as it's rendered. Click a clip marker on the bar to save an existing clip (**★ Save to folder**).
 - *See them:* **★ Favorites** (top right) lists your folders; open one to play its clips, copy each title or upload
   description, download the MP4, download the folder's list (.xlsx / CSV), rename, delete, or open it in Explorer.
+- *Edit a saved clip:* **✎ Edit** on a saved clip opens it in the editor (all tools, including Cut & split);
+  **Save & render** also replaces the copy in that folder. Works while the clip's original run still exists.
 - Each folder is a real folder in `favorites/` holding **copies** of the clip videos and thumbnails plus
   `favorites.json` (title, description, source), so saved clips stay even if you delete the run. Saving a clip
   again replaces its copy with the newest render.

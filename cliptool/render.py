@@ -541,19 +541,42 @@ def atempo_chain(speed: float) -> str:
     return ",".join(f"atempo={x:.4f}" for x in parts if abs(x - 1.0) > 1e-4) or "anull"
 
 
-def speed_pieces(start: float, end: float, base: float, zones: list[dict] | None) -> list[tuple[float, float, float]]:
-    """Split [start, end] (source seconds) into (a, b, speed) pieces: zones get their speed, the rest `base`."""
+def kept_ranges(start: float, end: float, cuts: list[dict] | None) -> list[tuple[float, float]]:
+    """[start, end] minus the parts you cut out."""
     out, cur = [], start
-    for z in sorted(zones or [], key=lambda z: z["start"]):
-        za, zb = max(z["start"], cur), min(z["end"], end)
-        if zb - za < 0.05:
+    for c in sorted(cuts or [], key=lambda c: c["start"]):
+        ca, cb = max(c["start"], cur), min(c["end"], end)
+        if cb - ca < 0.05:
             continue
-        if za - cur > 0.02:
-            out.append((cur, za, base))
-        out.append((za, zb, float(z["speed"])))
-        cur = zb
+        if ca - cur > 0.02:
+            out.append((cur, ca))
+        cur = max(cur, cb)
     if end - cur > 0.02:
-        out.append((cur, end, base))
+        out.append((cur, end))
+    return out
+
+
+def in_cut(t: float, cuts: list[dict] | None) -> bool:
+    return any(c["start"] <= t < c["end"] for c in cuts or [])
+
+
+def speed_pieces(start: float, end: float, base: float, zones: list[dict] | None,
+                 cuts: list[dict] | None = None) -> list[tuple[float, float, float]]:
+    """Split [start, end] (source seconds) into (a, b, speed) pieces: zones get their speed, the rest `base`;
+    parts that were cut out are left out."""
+    out = []
+    for ka, kb in kept_ranges(start, end, cuts):
+        cur = ka
+        for z in sorted(zones or [], key=lambda z: z["start"]):
+            za, zb = max(z["start"], cur), min(z["end"], kb)
+            if zb - za < 0.05:
+                continue
+            if za - cur > 0.02:
+                out.append((cur, za, base))
+            out.append((za, zb, float(z["speed"])))
+            cur = zb
+        if kb - cur > 0.02:
+            out.append((cur, kb, base))
     return out
 
 
@@ -605,9 +628,10 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     hs, he = hook.get("start"), hook.get("end")
     use_hook = bool(hook.get("on")) and hs is not None and he is not None and 1.0 <= he - hs <= 10.0
     zones = [z for z in (clip.get("speed_zones") or []) if z["end"] > start and z["start"] < start + dur]
-    pieced = use_hook or bool(zones)
+    cuts = [c for c in (clip.get("cuts") or []) if c["end"] > start and c["start"] < start + dur]
+    pieced = use_hook or bool(zones) or bool(cuts)
     tl = Timeline(([("hook", hs, he, speed)] if use_hook else []) +
-                  [("main", a, b, sp) for a, b, sp in speed_pieces(start, start + dur, speed, zones)])
+                  [("main", a, b, sp) for a, b, sp in speed_pieces(start, start + dur, speed, zones, cuts)])
     hook_out = tl.part_start("main")
     out_dur = tl.duration if pieced else dur / speed
 
@@ -615,6 +639,8 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
     subs = bool(captions or texts)
     if subs:
         words = clip_caption_words(clip, sentences) if captions else []
+        if cuts:  # words said in a part you cut out are gone too
+            words = [w for w in words if not in_cut((w["s"] + w["e"]) / 2, cuts)]
         style = caption_style(cfg["captions"], clip.get("style"))
         if pieced:
             # Put every word on the output timeline (teaser words, then the clip's, through the speed zones).

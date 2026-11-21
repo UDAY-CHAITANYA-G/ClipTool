@@ -356,6 +356,20 @@ def clean_changes(changes: dict, duration: float) -> dict:
                     continue
             clean_z.append({"start": round(za, 2), "end": round(zb, 2), "speed": round(sp, 3)})
         out["speed_zones"] = clean_z
+    if "cuts" in changes:
+        cs = changes["cuts"] or []
+        if not isinstance(cs, list) or len(cs) > 50:
+            raise ValueError("At most 50 cut-out parts per clip.")
+        merged: list[dict] = []
+        for c in sorted(cs, key=lambda c: float(c.get("start", 0))):
+            ca, cb = float(c["start"]), float(c["end"])
+            if cb - ca < 0.1:
+                continue
+            if merged and ca <= merged[-1]["end"] + 0.05:
+                merged[-1]["end"] = round(max(merged[-1]["end"], cb), 2)
+            else:
+                merged.append({"start": round(ca, 2), "end": round(cb, 2)})
+        out["cuts"] = merged
     if "description" in changes:
         d = str(changes["description"] or "").strip()
         if len(d) > 5000:
@@ -452,6 +466,11 @@ def _edit_clip(run_dir, rank, changes, log, stage) -> dict:
         raise ValueError(f"Clip #{rank} not found.")
     ch = clean_changes(changes, info.get("duration") or 0)
     clip.update(ch)
+    if clip.get("cuts"):
+        from .render import kept_ranges
+
+        if sum(b - a for a, b in kept_ranges(clip["start"], clip["end"], clip["cuts"])) < 1.0:
+            raise ValueError("You cut out almost everything - at least 1 second has to stay.")
     # Keep the sentence span in step with the (possibly trimmed) times.
     idx = [k for k, s in enumerate(sentences) if s["end"] > clip["start"] and s["start"] < clip["end"]]
     if idx:
@@ -613,6 +632,52 @@ def _append_manual_clip(run_dir, data, info, sentences, start, end, title, idx, 
     report.write_json(run_dir, info, report.clip_records(info, clips, sentences), data["settings"])
     print(f"Added clip #{rank_no}: {clip['title']} ({start:.1f}-{end:.1f}s)", flush=True)
     return rank_no
+
+
+def split_clip(run_dir: Path, rank_no: int, at: float, changes: dict | None = None) -> tuple[int, int]:
+    """Split a clip in two at source time `at` (your unsaved edits in `changes` go on both halves).
+    The first half keeps the clip's number; the second becomes a new clip. Returns (rank, new rank).
+    Nothing is rendered here."""
+    import copy
+
+    with key_lock(_run_key(run_dir)):
+        data, info, sentences, _ = load_run(run_dir)
+        clips = data["clips"]
+        clip = next((c for c in clips if c["rank"] == rank_no), None)
+        if not clip:
+            raise ValueError(f"Clip #{rank_no} not found.")
+        clip.update(clean_changes(changes or {}, info.get("duration") or 0))
+        a, b, at = float(clip["start"]), float(clip["end"]), round(float(at), 2)
+        if not (a + 1.0 <= at <= b - 1.0):
+            raise ValueError("Move the playhead inside the clip (at least 1 s from each end) to split there.")
+        second = copy.deepcopy(clip)
+        new_rank = max(c["rank"] for c in clips) + 1
+        first_len = at - a
+
+        def part(lst, lo, hi):
+            return [{**z, "start": max(z["start"], lo), "end": min(z["end"], hi)} for z in lst or []
+                    if z["end"] > lo + 0.1 and z["start"] < hi - 0.1]
+
+        clip["end"] = at
+        clip["speed_zones"], clip["cuts"] = part(clip.get("speed_zones"), a, at), part(clip.get("cuts"), a, at)
+        second.update({"rank": new_rank, "start": at, "end": b, "manual": True, "file": None, "thumbnail": None,
+                       "title": (clip["title"][:88] + " (part 2)"), "hook_intro": {"on": False},
+                       "reason": f"Split from clip #{rank_no}.", "cover_t": None, "description": None,
+                       "speed_zones": part(second.get("speed_zones"), at, b), "cuts": part(second.get("cuts"), at, b)})
+        # Text boxes are timed from the clip start: keep each on the half it shows in.
+        texts = clip.get("texts") or []
+        clip["texts"] = [t for t in texts if float(t.get("start", 0)) < first_len - 0.2]
+        second["texts"] = [{**t, "start": max(0.0, float(t.get("start", 0)) - first_len),
+                            "end": max(0.5, float(t.get("end", 0)) - first_len)}
+                           for t in texts if float(t.get("end", 0)) > first_len + 0.2]
+        for c, lo, hi in ((clip, a, at), (second, at, b)):
+            idx = [k for k, s in enumerate(sentences) if s["end"] > lo and s["start"] < hi]
+            if idx:
+                c["i"], c["j"] = idx[0], idx[-1]
+        clips.append(second)
+        recs = report.clip_records(info, clips, sentences)
+        report.write_json(run_dir, info, recs, data["settings"])
+        return rank_no, new_rank
 
 
 def delete_clip(run_dir: Path, rank_no: int) -> dict:

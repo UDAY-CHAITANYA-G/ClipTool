@@ -371,3 +371,16 @@ def test_user_presets_roundtrip(tmp_path, monkeypatch):
     assert ch["texts"][0]["end"] == 20.0 and ch["hook_intro"] == {"on": False}
     assert [p["name"] for p in up.list_all()] == ["My look"]
     assert up.delete("My look") and up.get("My look") is None
+
+
+def test_cuts_remove_parts_and_merge():
+    from cliptool import pipeline, render
+
+    assert render.kept_ranges(10, 30, [{"start": 14, "end": 20}, {"start": 25, "end": 26}]) == [(10, 14), (20, 25), (26, 30)]
+    pieces = render.speed_pieces(10, 30, 1.0, [{"start": 12, "end": 16, "speed": 2}], [{"start": 14, "end": 20}])
+    assert pieces == [(10, 12, 1.0), (12, 14, 2.0), (20, 30, 1.0)]
+    tl = render.Timeline([("main", a, b, sp) for a, b, sp in pieces])
+    assert abs(tl.duration - (2 + 1 + 10)) < 1e-6 and abs(tl.out_time("main", 21) - 4.0) < 1e-6
+    out = pipeline.clean_changes({"cuts": [{"start": 5, "end": 6}, {"start": 5.5, "end": 7}, {"start": 9, "end": 9.05}]}, 100)
+    assert out["cuts"] == [{"start": 5.0, "end": 7.0}]  # overlapping cuts merge, tiny ones are dropped
+    assert render.in_cut(5.5, out["cuts"]) and not render.in_cut(7.5, out["cuts"])

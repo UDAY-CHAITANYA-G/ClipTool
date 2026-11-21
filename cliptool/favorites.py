@@ -107,6 +107,16 @@ def items(name: str) -> dict:
     with _LOCK:
         d = _dir(name)
         its = sorted(_load(d), key=lambda i: i.get("added", 0), reverse=True)
+        out_root, ranks = folder("output"), {}
+        for i in its:  # can it still be edited? (its run and clip still exist)
+            run = i.get("run") or ""
+            if run not in ranks:
+                try:
+                    data = json.loads((out_root / run / "clips.json").read_text(encoding="utf-8"))
+                    ranks[run] = {c["rank"] for c in data.get("clips", [])}
+                except (OSError, ValueError):
+                    ranks[run] = set()
+            i["editable"] = i.get("rank") in ranks[run]
         return {"name": d.name, "path": str(d), "items": its}
 
 

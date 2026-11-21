@@ -351,6 +351,47 @@ class Handler(BaseHTTPRequestHandler):
             if m and method == "DELETE":
                 self._json(favorites.remove(m.group(1), m.group(2)))
                 return True
+            if path == "/api/favs/make-video" and method == "POST":
+                body = self._body()
+                from . import montage
+
+                pieces = body.get("pieces") or []
+                montage.clean_pieces(pieces)  # check before queuing (raises ValueError with a readable message)
+                aspect = body.get("aspect") if body.get("aspect") in render.SIZES else "vertical"
+                fit = body.get("fit") if body.get("fit") in render.FITS else "blur"
+                style = body.get("style") if body.get("style") in render.PRESETS else "highlight"
+                vname = " ".join(str(body.get("name") or "").split())[:80] or "My video"
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "montage", "title": vname, "status": "queued", "stage": f"Making “{vname}”",
+                       "progress": 0.02, "log": [], "result": None, "error": None, "cancel": False}
+                with JOBS_LOCK:
+                    _enqueue(job, lambda log, stage, cancelled: montage.build(
+                        vname, pieces, aspect, fit, style, bool(body.get("captions", True)),
+                        out_root=OUTPUT, work_root=WORK, log=log, stage=stage))
+                self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+                return True
+            m = re.fullmatch(r"/api/favs/([^/]+)/add-range", path)
+            if m and method == "POST":
+                body = self._body()
+                run = _run_dir(str(body.get("folder") or ""))
+                if not run:
+                    self._error("That run is gone.", HTTPStatus.NOT_FOUND)
+                    return True
+                a, b = float(body["start"]), float(body["end"])
+                if not 1.0 <= b - a <= 600.0:
+                    raise ValueError("Pick 1 second to 10 minutes of the video to save.")
+                fname, title, make = m.group(1), str(body.get("title") or ""), bool(body.get("create"))
+                if not make:
+                    favorites.items(fname)  # the folder must exist (raises FileNotFoundError)
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "fav", "fav": fname, "title": title, "folder": run.name, "status": "queued",
+                       "stage": f"Saving to “{fname}”", "progress": 0.05, "log": [], "result": None, "error": None,
+                       "cancel": False}
+                with JOBS_LOCK:
+                    _enqueue(job, lambda log, stage, cancelled: {**favorites.add_range(fname, run, a, b, title, make, log=log),
+                                                                 "folder": run.name})
+                self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+                return True
             m = re.fullmatch(r"/api/favs/([^/]+)/add", path)
             if m and method == "POST":
                 body = self._body()
@@ -1016,6 +1057,10 @@ def _job_summary(j: dict) -> dict:
         label = f"Clip #{j.get('rank')}"
     elif kind == "source":
         label = "Faster video (H.264)"
+    elif kind == "fav":
+        label = f"Saving to ★ {j.get('fav')}"
+    elif kind == "montage":
+        label = f"🎬 {j.get('title') or 'New video'}"
     elif kind == "add":
         label = "Your new clip"
     else:

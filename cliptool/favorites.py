@@ -117,6 +117,8 @@ def items(name: str) -> dict:
                 except (OSError, ValueError):
                     ranks[run] = set()
             i["editable"] = i.get("rank") in ranks[run]
+            i.setdefault("duration", round(float(i.get("end", 0)) - float(i.get("start", 0)), 2))
+            i.pop("words", None)  # not needed in the list (kept in favorites.json)
         return {"name": d.name, "path": str(d), "items": its}
 
 
@@ -172,6 +174,61 @@ def add(name: str, run_dir: Path, ranks: list[int]) -> dict:
             added.append(c["rank"])
         _save(d, current)
         return {"name": d.name, "added": added, "replaced": replaced, "skipped": skipped, "count": len(current)}
+
+
+def add_range(name: str, run_dir: Path, start: float, end: float, title: str = "", make_folder: bool = False,
+              log=print) -> dict:
+    """Save a stretch of a run's original video (no captions / logos / layout) into a folder as stock footage,
+    with the words said in it (so a video made from it can have captions)."""
+    from .ffmpeg import run as ffmpeg_run
+    from .pipeline import load_run
+    from .render import words_between
+
+    data, info, sentences, source = load_run(run_dir)
+    start, end = round(max(0.0, float(start)), 2), round(min(float(end), float(info.get("duration") or end)), 2)
+    if not 1.0 <= end - start <= 600.0:
+        raise ValueError("Pick 1 second to 10 minutes of the video to save.")
+    with _LOCK:
+        if make_folder and not (root() / clean_name(name)).is_dir():
+            name = create(name)["name"]
+        d = _dir(name)
+    vid = (info.get("id") or run_dir.name)[:11]
+    key = f"{vid}_{int(start * 10)}_{int(end * 10)}"
+    words = [{"w": w["w"], "s": round(w["s"] - start, 3), "e": round(w["e"] - start, 3)}
+             for w in words_between(sentences, start, end)]
+    title = " ".join(str(title or "").split())[:100] or " ".join(w["w"] for w in words[:8]) or f"{vid} {start:.0f}s"
+    stem = f"{key}"
+    log(f"Saving {end - start:.1f} s of the original video to '{d.name}' ...")
+    tmp = d / f".{stem}.part.mp4"
+    ffmpeg_run(["-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(tmp)])
+    ffmpeg_run(["-ss", f"{min(1.0, (end - start) / 2):.2f}", "-i", str(tmp), "-frames:v", "1", "-vf", "scale=480:-2",
+                "-q:v", "4", str(d / f"{stem}.jpg")])
+    with _LOCK:
+        current = _load(d)
+        for old in [i for i in current if i.get("key") == key]:
+            current.remove(old)
+        tmp.replace(d / f"{stem}.mp4")
+        item = {"key": key, "kind": "stock", "file": f"{stem}.mp4", "thumb": f"{stem}.jpg", "title": title,
+                "video_title": info.get("title"), "channel": info.get("channel"),
+                "source_url": f"https://youtu.be/{vid}?t={int(start)}" if info.get("id") else None,
+                "run": run_dir.name, "start": start, "end": end, "duration": round(end - start, 2), "words": words,
+                "size_mb": round((d / f"{stem}.mp4").stat().st_size / 2 ** 20, 1), "added": time.time()}
+        current.append(item)
+        _save(d, current)
+    log("Saved.")
+    return {"name": d.name, "key": key, "title": title, "count": len(current)}
+
+
+def stock(name: str, key: str) -> tuple[Path, dict]:
+    """A saved item's video file and its entry (for making a video from several)."""
+    with _LOCK:
+        d = _dir(name)
+        it = next((i for i in _load(d) if i.get("key") == key), None)
+        if not it:
+            raise FileNotFoundError(f"A clip in “{name}” is gone (deleted?).")
+        return d / it["file"], it
 
 
 def remove(name: str, key: str) -> dict:

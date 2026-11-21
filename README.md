@@ -94,18 +94,20 @@ on a clip made before this fix to get the corrected captions.
 description), video file name and real length as an **Excel table (.xlsx)** - header row, wrapped text, filters - or as
 **CSV**. Works without Excel add-ons; the file opens in Excel, Google Sheets or LibreOffice.
 
-**★ Favorites (your own folders):** keep the clips you like in folders of your own.
-- *Save from a run:* tick the box on clip cards (or **Select all**) and press **★ Save to folder**, or press **★** on one
-  card. Pick a folder or type a new name.
-- *Save from the full video:* choose **★ Save to: <folder>** next to **Create clip** - the new clip goes into that folder
-  as soon as it's rendered. Click a clip marker on the bar to save an existing clip (**★ Save to folder**).
-- *See them:* **★ Favorites** (top right) lists your folders; open one to play its clips, copy each title or upload
-  description, download the MP4, download the folder's list (.xlsx / CSV), rename, delete, or open it in Explorer.
-- *Edit a saved clip:* **✎ Edit** on a saved clip opens it in the editor (all tools, including Cut & split);
-  **Save & render** also replaces the copy in that folder. Works while the clip's original run still exists.
-- Each folder is a real folder in `favorites/` holding **copies** of the clip videos and thumbnails plus
-  `favorites.json` (title, description, source), so saved clips stay even if you delete the run. Saving a clip
-  again replaces its copy with the newest render.
+**★ Favorites - stock footage and a video maker:**
+- *Save footage (only in the full video):* open a run, press **▶ Full video – make clips**, select a part (drag on
+  the bar, or **I** / **O**) and press **★ Save selection to folder** - or click a clip marker and press
+  **★ Save to folder**. It saves the **original video** for that stretch (no captions, logos or layout), plus the
+  words said in it, into a folder you pick or create.
+- *See them:* **★ Favorites** (top right): your folders on the left; open one to play its clips, download them,
+  rename / delete folders or open them in Explorer.
+- *Make a video from several clips:* press **🎬 Make a video**, then **+ Add to video** on clips from any folders.
+  Drag them into order (or ↑ ↓), trim each with **In / Out**, duplicate or remove, and **▶ Play all** to preview.
+  Pick the format (9:16, 4:5, 1:1, 16:9), layout and caption style and press **🎬 Create video**. The clips are
+  joined into one video that opens in the **full editor** - change layout, captions (from the saved words), logos,
+  text, filters, speed, cut parts out or split - then **Save & render**. It appears as its own run in the list.
+- Folders are real folders in `favorites/` (videos + `favorites.json`), so saved footage stays even if you delete
+  the run it came from.
 
 **Clip order:** **⏱ Timeline** (default) shows clips in the order they happen in the video; **★ Best** shows the highest score first (remembered).
 

@@ -49,7 +49,7 @@
             </div>
             <div class="fv-io">
               <input id="fv-name" maxlength="100" placeholder="Clip title (filled in from what's said)" aria-label="Clip title">
-              <select id="fv-fav" class="fv-favsel" aria-label="Also save the new clip to a favorites folder" title="Also save the new clip to one of your favorites folders when it's ready"></select>
+              <button type="button" class="fv-favsave" data-fv="favsel" data-favpick title="Save the selected part of the original video (no captions or logos) into a favorites folder - use it later to make videos from several clips">★ Save selection to folder</button>
               <button type="button" class="primary" data-fv="create">✂ Create clip</button>
             </div>
             <p class="fv-msg" id="fv-msg"></p>
@@ -88,7 +88,7 @@
     }
   }
   /* When the clip finishes rendering, refresh the markers (the placeholder gets its real number). */
-  function watchJob(id, favFolder){
+  function watchJob(id){
     const folder = F.folder;
     const tick = async () => {
       if (!F || F.folder !== folder) return;
@@ -98,10 +98,6 @@
       if (!F || F.folder !== folder) return;
       if (o) { F.clips = o.clips; renderClips(); }
       el("fv-msg").textContent = j && j.status === "done" ? "✓ Clip ready - it's in the clip list (Picked by you)." : `Clip failed: ${(j && j.error) || "unknown error"}`;
-      if (j && j.status === "done" && favFolder && j.result && j.result.rank != null) {
-        try { await Fav.save(folder, [j.result.rank], favFolder); el("fv-msg").textContent += ` Saved to “${favFolder}”.`; }
-        catch (err) { toast(err.message); }
-      }
     };
     setTimeout(tick, 2000);
   }
@@ -114,21 +110,13 @@
       <button type="button" class="favgo" data-fvfav="${c.rank}" data-favpick>★ Save to folder</button>`;
     row.hidden = false;
   }
-  /* Folder choice for the next clip you create. */
-  async function fillFavSelect(){
-    const sel = el("fv-fav"); if (!sel || !window.Fav) return;
-    const keep = sel.value;
-    const list = await Fav.refresh();
-    sel.innerHTML = `<option value="">Don't save to a folder</option>` + list.map(f => `<option value="${esc(f.name)}">★ Save to: ${esc(f.name)}</option>`).join("")
-      + `<option value="__new">★ Save to a new folder…</option>`;
-    sel.value = list.some(f => f.name === keep) ? keep : "";
-  }
   function renderClips(){
     el("fv-clips").innerHTML = F.clips.map(c =>
       `<button type="button" class="fv-clip${c.manual ? " manual" : ""}" data-seek="${c.start}" data-cliprank="${c.rank}" style="left:${pct(c.start)};width:${Math.max(0.25, (c.end - c.start) / F.video.duration * 100)}%"
         title="#${c.rank} ${esc(c.title)} (${fmt(c.start)}–${fmt(c.end)})">${c.rank}</button>`).join("");
   }
   function renderSel(){
+    const fb = document.querySelector('#fv [data-fv="favsel"]'); if (fb) fb.disabled = F.a == null || F.b == null;
     const s = el("fv-sel");
     const has = F.a != null && F.b != null && F.b > F.a;
     s.hidden = !has;
@@ -192,7 +180,7 @@
       el("fv-msg").textContent = "✓ Clip is rendering. Keep picking more, or go back to the clip list.";
       F.a = F.b = null; F.nameTouched = false; el("fv-name").value = ""; renderSel();
       setBusy(true); showJob({ status: d.status, stage: d.stage, progress: 0.05, log: [] }); poll(d.id);
-      watchJob(d.id, el("fv-fav").value && el("fv-fav").value !== "__new" ? el("fv-fav").value : null);
+      watchJob(d.id);
     } finally { renderSel(); }
   }
 
@@ -203,7 +191,7 @@
       const s = e.target.closest("[data-seek]");
       if (s) { v.currentTime = +s.dataset.seek; if (s.dataset.cliprank) showClipRow(+s.dataset.cliprank); return; }
       const fs = e.target.closest("[data-fvfav]");
-      if (fs) { const rank = +fs.dataset.fvfav; Fav.pick(fs, { ranks: [rank], label: `Save clip #${rank} to…`, now: { folder: F.folder, ranks: [rank] } }); return; }
+      if (fs) { const c = F.clips.find(x => x.rank === +fs.dataset.fvfav); if (c) Fav.saveRange(fs, F.folder, c.start, c.end, c.title); return; }
       const pl = e.target.closest("[data-fvplay]");
       if (pl) { const c = F.clips.find(x => x.rank === +pl.dataset.fvplay); if (c) { setA(c.start); setB(c.end); v.currentTime = c.start; F.playSel = true; v.play(); } return; }
       const f = e.target.closest("[data-from]"); if (f) { setA(F.sentences[+f.dataset.from].start); v.currentTime = F.a; return; }
@@ -216,18 +204,12 @@
       if (act === "nudge") { const k = b.dataset.k; if (F[k] != null) { F[k] = +(F[k] + +b.dataset.v).toFixed(2); if (F.b <= F.a) F[k] -= +b.dataset.v; renderSel(); } }
       if (act === "playsel" && F.a != null) { v.currentTime = F.a; F.playSel = F.b != null; v.play(); }
       if (act === "create") create();
+      if (act === "favsel") {
+        if (F.a == null || F.b == null) { toast("Select a part first: drag on the bar, or press I and O."); return; }
+        Fav.saveRange(b, F.folder, F.a, F.b, el("fv-name").value.trim());
+      }
     });
     el("fv-name").addEventListener("input", () => { F.nameTouched = true; });
-    el("fv-fav").addEventListener("change", async e => {
-      if (e.target.value !== "__new") return;
-      const n = prompt("Name of the new favorites folder:");
-      if (!n || !n.trim()) { e.target.value = ""; return; }
-      try {
-        const r = await fetch("/api/favs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n }) });
-        const d = await r.json(); if (!r.ok) throw new Error(d.error);
-        await fillFavSelect(); e.target.value = d.name; toast(`Folder “${d.name}” created`);
-      } catch (err) { toast(err.message || "Couldn't create the folder"); e.target.value = ""; }
-    });
     el("fv-q").addEventListener("input", renderList);
     el("fv-list").addEventListener("pointerenter", () => { F.listHover = true; });
     el("fv-list").addEventListener("pointerleave", () => { F.listHover = false; });
@@ -277,7 +259,7 @@
     const v = el("fv-video"); v.src = d.source_url;
     el("fv").hidden = false; document.body.style.overflow = "hidden";
     renderClips(); renderSel(); renderList(); drawWave();
-    el("fv-cliprow").hidden = true; fillFavSelect();
+    el("fv-cliprow").hidden = true;
     fetch(`/api/runs/${encodeURIComponent(folder)}/overview-wave`).then(r => r.ok ? r.json() : null).then(w => { if (w && F) { F.wave = w; drawWave(); } });
   }
   function close(){

@@ -384,3 +384,25 @@ def test_cuts_remove_parts_and_merge():
     out = pipeline.clean_changes({"cuts": [{"start": 5, "end": 6}, {"start": 5.5, "end": 7}, {"start": 9, "end": 9.05}]}, 100)
     assert out["cuts"] == [{"start": 5.0, "end": 7.0}]  # overlapping cuts merge, tiny ones are dropped
     assert render.in_cut(5.5, out["cuts"]) and not render.in_cut(7.5, out["cuts"])
+
+
+def test_catchy_titles():
+    from cliptool import render, titles
+
+    sents = [{"start": 0, "end": 2, "text": "Uh okay so we go here.", "words": []},
+             {"start": 2, "end": 4, "text": "Bro, are you kidding me?", "words": []},
+             {"start": 4, "end": 6, "text": "What the [ __ ] happened?", "words": []},
+             {"start": 6, "end": 8, "text": "Whoa, whoa, whoa, whoa.", "words": []}]
+    clip = {"start": 0, "end": 8, "i": 0, "j": 3, "title": "x", "fit": "stack", "cam_share": 0.33}
+    opts = titles.suggestions(clip, sents, "GTA 6 Walkthrough Part 4")
+    assert opts[0] == '"BRO, ARE YOU KIDDING ME?"'              # the punchiest real line, in capitals
+    assert any(o.startswith("GTA 6: ") for o in opts)             # game name from the video title
+    assert not any("WHAT THE" in o or "WHOA, WHOA" in o for o in opts)  # bleeped / repeated lines skipped
+    assert titles.wrap('"BRO, ARE YOU KIDDING ME?"') == '"BRO, ARE YOU\nKIDDING ME?"'
+    box = titles.add_title(clip, sents, "GTA 6", "vertical")["texts"][0]
+    assert box["id"] == "ttitle" and box["end"] is None and 0.33 < box["y"] < 0.42  # whole clip, just under the cam/game seam
+    used = {opts[0]}
+    assert titles.add_title(clip, sents, "GTA 6", "vertical", used)["texts"][0]["text"] != titles.wrap(opts[0])
+    # whole-clip text (no end) is drawn until the end of the output
+    ev = render.text_events([{"text": "HI", "start": 0, "end": None}], (1080, 1920), 12.5)
+    assert ev and "0:00:12.50" in ev[0]

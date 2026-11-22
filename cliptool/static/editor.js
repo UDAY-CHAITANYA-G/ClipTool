@@ -162,6 +162,13 @@
     }
     return out;
   }
+  /* Same line breaking as titles.wrap() on the server: burned-in text doesn't wrap by itself. */
+  function wrapTitle(text){
+    const max = S.aspect === "vertical" ? 18 : 26, lines = []; let cur = "";
+    for (const w of text.split(/\s+/)) { if (cur && cur.length + 1 + w.length > max) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }
+    if (cur) lines.push(cur);
+    return (lines.length > 3 ? [...lines.slice(0, 2), lines.slice(2).join(" ")] : lines).join("\n");
+  }
   const zoneAt = src => (S.zones || []).find(z => src >= z.start && src < z.end);
   const video = () => el("ws-video");
   const tOut = () => X.phase === "hook" ? -1 : srcToOut(video().currentTime);
@@ -393,8 +400,13 @@
     el("ws-fade").style.opacity = clamp(a, 0, 1);
     el("ws-tc").textContent = `${Math.max(0, t).toFixed(1)} / ${D.toFixed(1)} s` + (S.speed !== 1 ? ` · ${S.speed}×` : "");
   }
+  function syncWhole(){
+    const D = +outDur().toFixed(2);
+    for (const t of S.texts || []) if (t.whole) { t.start = 0; t.end = D; }
+  }
   function refresh(){
     if (!X.open) return;
+    syncWhole();
     sizeFrame(); drawFrame(); drawImages(); drawCaptions(); drawTexts(); drawExtras(); renderTimeline(); drawSource();
     el("ws-title").value = S.title;
     const sp = el("ws-speed");
@@ -594,12 +606,18 @@
     },
     text(){
       const t = sel();
-      let h = `<h3>Add text</h3><div class="btnrow">${Object.entries(TEXT_PRESETS).map(([k, p]) =>
+      const tt = S.texts.find(x => x.id === "ttitle");
+      let h = `<h3>✨ Catchy title</h3>
+        <p class="note" style="margin-top:0">A big title for the whole clip, made from what's said - it tells viewers why to keep watching.</p>
+        ${X.titleOpts ? `<div class="topts">${X.titleOpts.map((o, i) => `<button type="button" class="topt${tt && tt.text.replace(/\n/g, " ") === o ? " on" : ""}" data-act="usetitle" data-v="${i}">${esc(o)}</button>`).join("")}</div>` : ""}
+        <div class="btnrow"><button type="button" data-act="suggesttitles">${X.titleOpts ? "↻ More ideas" : "✨ Suggest titles"}</button>
+          ${tt ? `<button type="button" data-act="seltext" data-v="ttitle">Edit title box</button><button type="button" class="danger" data-act="notitle">Remove title</button>` : ""}</div>
+        <h3>Add text</h3><div class="btnrow">${Object.entries(TEXT_PRESETS).map(([k, p]) =>
         `<button type="button" data-act="addtext" data-v="${k}">+ ${p.label}</button>`).join("")}</div>
         <h3>Text boxes (${S.texts.length})</h3><div class="tlist" role="listbox" aria-label="Text boxes">${S.texts.map(x =>
           `<button type="button" class="titem" role="option" aria-selected="${x.id === X.selText}" data-act="seltext" data-v="${x.id}">
             <span class="sw" style="background:${x.box ? x.box_color : x.color}"></span><span class="tt">${esc(x.text)}</span>
-            <span class="tm">${x.start.toFixed(1)}–${x.end.toFixed(1)}s</span></button>`).join("") || '<p class="note">No text yet. Add one above.</p>'}</div>`;
+            <span class="tm">${x.whole ? "whole clip" : `${x.start.toFixed(1)}–${x.end.toFixed(1)}s`}</span></button>`).join("") || '<p class="note">No text yet. Add one above.</p>'}</div>`;
       if (!t) return h;
       return h + `<h3>Selected text</h3>
         <label class="fld">Text<textarea rows="2" data-bind="sel.text">${esc(t.text)}</textarea></label>
@@ -756,6 +774,24 @@
     close: () => close(),
     undo, redo,
     save: () => save(),
+    suggesttitles: async () => {
+      try {
+        const d = await (await fetch(`/api/runs/${encodeURIComponent(X.folder)}/clips/${X.rank}/titles`)).json();
+        const more = X.titleOpts ? d.options.filter(o => !X.titleOpts.includes(o)) : [];
+        const boxes = Object.fromEntries(d.options.map((o, i) => [o, d.boxes[i]]));
+        X.titleBoxes = { ...(X.titleBoxes || {}), ...boxes };
+        X.titleOpts = X.titleOpts && more.length ? [...more, ...X.titleOpts].slice(0, 8) : d.options;
+        renderPanel();
+      } catch { toast("Couldn't make title ideas."); }
+    },
+    usetitle: v => mutate("title", () => {
+      const opt = X.titleOpts[+v], box = (X.titleBoxes || {})[opt] || {}, text = box.text || wrapTitle(opt);
+      let t = S.texts.find(x => x.id === "ttitle");
+      if (t) { t.text = text; if (box.y != null) t.y = box.y; }   // keeps your colours / font, refits the position
+      else { t = { ...box, id: "ttitle", text, whole: true, start: 0, end: +outDur().toFixed(2) }; delete t.end; t.end = +outDur().toFixed(2); S.texts.unshift(t); }
+      X.selText = "ttitle";
+    }),
+    notitle: () => mutate("title", () => { S.texts = S.texts.filter(x => x.id !== "ttitle"); if (X.selText === "ttitle") X.selText = null; }),
     presets: () => togglePresets(),
     pssave: async () => {
       const name = (el("ws-psname").value || "").trim();
@@ -904,9 +940,9 @@
     deltext: () => { if (sel()) mutate("deltext", () => { S.texts = S.texts.filter(t => t.id !== X.selText); X.selText = null; }); },
     dupetext: () => { const t = sel(); if (t) mutate("dupe", () => { const c = { ...t, id: newTextId(), y: clamp(t.y + 0.06, 0, 1) }; S.texts.push(c); X.selText = c.id; }); },
     textpos: v => { const [x, y] = v.split(",").map(Number); mutate("textpos", () => { Object.assign(sel(), { x, y }); }); },
-    tfrom: () => mutate("ttime", () => { const t = sel(); t.start = +clamp(tOut(), 0, t.end - 0.1).toFixed(1); }),
-    tto: () => mutate("ttime", () => { const t = sel(); t.end = +clamp(tOut(), t.start + 0.1, outDur()).toFixed(1); }),
-    twhole: () => mutate("ttime", () => { const t = sel(); t.start = 0; t.end = +outDur().toFixed(1); }),
+    tfrom: () => mutate("ttime", () => { const t = sel(); t.whole = false; t.start = +clamp(tOut(), 0, t.end - 0.1).toFixed(1); }),
+    tto: () => mutate("ttime", () => { const t = sel(); t.whole = false; t.end = +clamp(tOut(), t.start + 0.1, outDur()).toFixed(1); }),
+    twhole: () => mutate("ttime", () => { const t = sel(); t.whole = true; t.start = 0; t.end = +outDur().toFixed(1); }),
     selimg: v => { X.selImg = v; renderPanel(); refresh(); },
     addimg: v => addImage({ file: v }),
     adddefault: v => { const d = WM.all[v || "watermark"]; addImage({ file: d.file, x: d.x, y: d.y, size: d.size, opacity: d.opacity }); },
@@ -1000,7 +1036,7 @@
           if (path === "text") { if (!S.textEdited) S.textRange = [S.start, S.end]; S.textEdited = true; }
           if (path === "speed") video().playbackRate = val;
           if (path === "cam_share" && S.facecam) S.facecam = shapeFacecam(S.facecam);
-          if (path === "sel.start" || path === "sel.end") { const t = sel(); t.start = clamp(t.start, 0, outDur()); t.end = clamp(t.end, t.start + 0.1, outDur()); }
+          if (path === "sel.start" || path === "sel.end") { const t = sel(); t.whole = false; t.start = clamp(t.start, 0, outDur()); t.end = clamp(t.end, t.start + 0.1, outDur()); }
         }, { panel: structural });
         const out = document.querySelector(`#ws [data-out="${path}"]`);
         if (out) out.textContent = FMT[inp.dataset.fmt]?.(val) ?? val;
@@ -1126,6 +1162,7 @@
       const t = S.texts.find(x => x.id === bar.dataset.id); if (!t) return;
       X.selText = t.id; tt.setPointerCapture(e.pointerId);
       hist.push(JSON.stringify(S)); fut = []; lastKey = "";
+      t.whole = false;
       bdrag = { t, edge: e.target.dataset.edge || "move", x0: tAt(e, tt), s0: t.start, e0: t.end };
       if (X.tool !== "text") X.tool = "text";
       renderPanel();
@@ -1239,7 +1276,7 @@
     const d = await r.json();
     if (!r.ok) { toast(d.error || "Can't edit this clip."); return; }
     const st = clip.style || {}, preset = C.presets[st.preset] ? st.preset : "highlight", p = C.presets[preset];
-    X = { open: true, folder, rank, fav: opts.fav || null, cutA: null, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
+    X = { open: true, folder, rank, fav: opts.fav || null, cutA: null, titleOpts: null, titleBoxes: null, words: d.words, bounds: d.sentence_bounds, videoId: d.video_id,
           lo: Math.max(0, clip.start - 30), hi: Math.min(d.duration || clip.end + 30, clip.end + 30), tool: "layout", selText: null, selImg: null };
     if (!WM.all) await loadWatermarks();
     X.dsettings = d.settings;
@@ -1270,7 +1307,7 @@
       textRange: clip.caption_range || (clip.caption_text ? [clip.start, clip.end] : null), capOffset: clip.caption_offset || 0,
       style: { preset, ...presetStyle(preset), position: st.position || p.position || "bottom", scale: n(st.scale, 1),
                ...Object.fromEntries(STYLE_KEYS.filter(k => st[k] !== undefined && st[k] !== null).map(k => [k, st[k]])) },
-      texts: (clip.texts || []).map(t => ({ ...t })),
+      texts: (clip.texts || []).map(t => t.end == null ? { ...t, whole: true, start: 0, end: 0 } : { ...t }),
       images: (clip.images || []).map(i => ({ ...i })),
       hookIntro: clip.hook_intro ? { ...clip.hook_intro } : { on: false, start: null, end: null, text: "" },
       description: clip.description || null,
@@ -1360,7 +1397,7 @@
       caption_text: S.textEdited && typed && typed !== original ? typed : null,
       caption_range: S.textEdited && typed && typed !== original ? (S.textRange || [S.start, S.end]) : null,
       caption_offset: S.capOffset || 0,
-      style: S.style, texts: S.texts, images: S.images,
+      style: S.style, texts: S.texts.map(({ whole, ...t }) => whole ? { ...t, start: 0, end: null } : t), images: S.images,
       hook_intro: S.hookIntro && S.hookIntro.start != null ? S.hookIntro : { on: false },
       speed_zones: (S.zones || []).map(({ start, end, speed }) => ({ start, end, speed })),
       cuts: (S.cuts || []).map(({ start, end }) => ({ start, end })),

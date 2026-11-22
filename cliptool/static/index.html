@@ -119,6 +119,7 @@ details.log pre{max-height:220px;overflow:auto;background:var(--soft);padding:10
 .exportmenu[hidden]{display:none}
 .exportmenu a{padding:7px 10px;border-radius:7px;color:var(--ink);text-decoration:none;font-size:13px}
 .exportmenu a:hover,.exportmenu a:focus{background:var(--soft)}
+.titlesbtn{font-size:12.5px;padding:5px 10px;font-weight:650;border-color:#FFD400;color:#FFD400}
 .fullbtn{border-color:var(--accent);color:var(--accent);font-weight:650;font-size:12.5px;padding:5px 10px}
 .tag.mine{border-color:#a855f7;color:#a855f7}
 .viewseg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -277,6 +278,7 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
             <option value="">None - use these settings</option>
           </select></label>
         <label class="check"><input id="captions" type="checkbox" checked> Burn captions</label>
+        <label class="check" title="A big catchy title on screen for the whole clip, made from what's said - helps people keep watching"><input id="titleov" type="checkbox" checked> Catchy title</label>
         <label class="check" title="Each clip starts with its most gripping 3-5 seconds, then plays from the beginning"><input id="hookintro" type="checkbox"> Hook intro</label>
       </div>
       <p class="logo-status" id="logo-status"></p>
@@ -297,6 +299,7 @@ dialog#settings::backdrop{background:rgba(0,0,0,.55)}
           <select id="runpreset" class="runpreset" hidden aria-label="Apply one of your presets to every clip in this run" title="Re-render every clip in this run with one of your saved looks">
             <option value="">★ Preset to all clips…</option>
           </select>
+          <button type="button" id="titlesall" class="titlesbtn" hidden title="Put a catchy on-screen title on every clip of this run (different for each clip)">✨ Titles on all clips</button>
           <button type="button" id="openfull" class="fullbtn" hidden title="Watch the whole video, search what's said, and cut your own clips">▶ Full video – make clips</button>
           <div class="viewseg sortseg" role="group" aria-label="Clip order">
             <button type="button" data-sort="time" aria-pressed="true" title="In the order they happen in the video">⏱ Timeline</button><button type="button" data-sort="best" aria-pressed="false" title="Best score first">★ Best</button>
@@ -408,6 +411,18 @@ async function checkSource(folder){
     };
   } catch (e) {}
 }
+
+/* ✨ Titles on all clips: a different catchy title on each clip, rendered side by side. */
+$("titlesall").addEventListener("click", async () => {
+  if (!currentRun) return;
+  if (!confirm(`Put a catchy on-screen title on all ${currentRun.clips.length} clips?\n\nEach clip gets its own title (made from what's said) for the whole clip, and is re-rendered. Your other text stays; change or remove a title later in the editor (Text tool).`)) return;
+  releaseVideos();
+  const r = await fetch(`/api/runs/${encodeURIComponent(currentFolder)}/titles`, { method: "POST" });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || "Couldn't add titles."); return; }
+  toast(`Adding titles to ${d.jobs.length} clips - e.g. ${d.titles.slice(0, 2).join(" · ")}`);
+  poll(d.jobs[0]);
+});
 
 /* Download list: No., title, description of every clip as an Excel table or CSV. */
 $("exportbtn").addEventListener("click", e => {
@@ -532,7 +547,7 @@ $("jobrows").addEventListener("click", async e => {
 $("f").addEventListener("submit", async e => {
   e.preventDefault(); $("msg").textContent = "";
   const body = { url: $("url").value.trim(), count: +$("count").value, min: +$("min").value, max: +$("max").value,
-                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked, speed: +$("speed").value, preset: $("preset").value || null };
+                 aspect: $("aspect").value, fit: $("fit").value, captions: $("captions").checked, style: $("style").value, hook_intro: $("hookintro").checked, speed: +$("speed").value, preset: $("preset").value || null, title_overlay: $("titleov").checked };
   if (body.min >= body.max) { $("msg").textContent = "Min length must be smaller than max length."; return; }
   setBusy(true);
   const r = await fetch("/api/jobs", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
@@ -637,6 +652,7 @@ async function openRun(folder){
   $("empty").style.display = d.clips.length ? "none" : "";
   $("delrun").hidden = false;
   $("openfull").hidden = false;
+  $("titlesall").hidden = !d.clips.length;
   $("exportwrap").hidden = !d.clips.length;
   $("export-xlsx").href = `/api/runs/${encodeURIComponent(folder)}/export.xlsx`;
   $("export-csv").href = `/api/runs/${encodeURIComponent(folder)}/export.csv`;

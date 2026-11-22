@@ -667,6 +667,23 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        m = re.fullmatch(r"/api/runs/([^/]+)/clips/(\d+)/titles", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from . import titles
+
+            try:
+                data, info, sentences, _ = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            clip = next((c for c in data["clips"] if c["rank"] == int(m.group(2))), None)
+            if not clip:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            aspect = clip.get("aspect") or data["settings"].get("aspect", "vertical")
+            opts = titles.suggestions(clip, sentences, info.get("title", ""))
+            return self._json({"options": opts, "boxes": [titles.title_box(o, clip, aspect) for o in opts]})
         m = re.fullmatch(r"/api/runs/([^/]+)/source-info", path)
         if m:
             run = _run_dir(m.group(1))
@@ -859,6 +876,7 @@ class Handler(BaseHTTPRequestHandler):
                                     hook_intro=bool(body.get("hook_intro")),
                                     speed=min(2.0, max(0.5, float(body.get("speed") or 1.0))),
                                     preset=(str(body.get("preset")) if body.get("preset") else None),
+                                    title_overlay=bool(body.get("title_overlay", True)),
                                     out=OUTPUT, work=WORK)
 
             def work(log, stage, cancelled):
@@ -885,6 +903,29 @@ class Handler(BaseHTTPRequestHandler):
                        "error": None, "cancel": False}
                 _enqueue(job, lambda log, stage, cancelled: pipeline.make_source_fast(run, log=log, stage=stage))
             return self._json({"id": jid, "status": job["status"], "stage": job["stage"]}, HTTPStatus.ACCEPTED)
+        m = re.fullmatch(r"/api/runs/([^/]+)/titles", path)
+        if m:
+            run = _run_dir(m.group(1))
+            if not run:
+                return self._error("not found", HTTPStatus.NOT_FOUND)
+            from . import titles
+
+            try:
+                data, info, sentences, _ = pipeline.load_run(run)
+            except FileNotFoundError as e:
+                return self._error(str(e), HTTPStatus.GONE)
+            used, ids = set(), []
+            for c in sorted(data["clips"], key=lambda c: c["rank"]):
+                aspect = c.get("aspect") or data["settings"].get("aspect", "vertical")
+                texts = titles.add_title(c, sentences, info.get("title", ""), aspect, used)["texts"]
+                jid = uuid.uuid4().hex[:12]
+                job = {"id": jid, "kind": "edit", "folder": run.name, "rank": c["rank"], "status": "queued",
+                       "stage": f"Adding a title to clip #{c['rank']}", "progress": 0.05, "log": [], "result": None,
+                       "error": None, "cancel": False, "preps": [lambda texts=texts: {"texts": texts}]}
+                with JOBS_LOCK:
+                    job = _enqueue(job, _edit_work(run, c["rank"], job))
+                ids.append(job["id"])
+            return self._json({"jobs": ids, "titles": sorted(used)}, HTTPStatus.ACCEPTED)
         m = re.fullmatch(r"/api/runs/([^/]+)/apply-preset", path)
         if m:
             run = _run_dir(m.group(1))

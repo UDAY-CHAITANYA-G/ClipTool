@@ -27,6 +27,7 @@ class Options:
     hook_intro: bool = False          # play the best 3-5 s of each clip first, then the clip
     speed: float = 1.0                # 0.5-2x playback speed for every clip (captions stay in sync)
     preset: str | None = None         # one of your saved presets: its whole look goes on every clip
+    title_overlay: bool = True        # a catchy on-screen title for the whole clip
     ai: bool = False
     model: str | None = None
     lang: str = "en"
@@ -145,6 +146,13 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
             if default_imgs:
                 c["images"] = [dict(i) for i in default_imgs]
             c["aspect"], c["fit"], c["captions"] = o.aspect, o.fit, o.captions
+        if o.title_overlay:
+            from . import titles
+
+            used: set = set()
+            for c in clips:
+                c.update(titles.add_title(c, sentences, info.get("title", ""), o.aspect, used))
+            log(f"  catchy on-screen titles: {', '.join(sorted(used)[:3])} ...")
         if o.preset:
             from . import userpresets
 
@@ -181,7 +189,7 @@ def run(o: Options, log: Callable[[str], None] = print, stage: Callable[[str, fl
     settings = {"count": count, "min_seconds": min_s, "max_seconds": max_s,
                 "ai": bool(clips and clips[0].get("claude") is not None), "model": model if o.ai else None,
                 "aspect": o.aspect, "fit": o.fit, "captions": o.captions, "transcript_source": tr["source"],
-                "work_dir": str(work.dir.resolve()), "rendered": not o.dry_run}
+                "work_dir": str(work.dir.resolve()), "rendered": not o.dry_run, "title_overlay": o.title_overlay}
     report.write_json(out_dir, info, recs, settings)
     page = report.write_html(out_dir, info, recs)
     if stage:
@@ -250,7 +258,8 @@ def clean_texts(texts) -> list[dict]:
             "bold": bool(t.get("bold", True)), "italic": bool(t.get("italic", False)),
             "outline": int(min(12, max(0, float(t.get("outline", 4))))), "shadow": bool(t.get("shadow", True)),
             "box": bool(t.get("box", False)), "box_opacity": min(1.0, max(0.1, float(t.get("box_opacity", 0.85)))),
-            "start": max(0.0, float(t.get("start", 0))), "end": max(0.1, float(t.get("end", 3))),
+            "start": max(0.0, float(t.get("start") or 0)),
+            "end": None if t.get("end") is None and "end" in t else max(0.1, float(t.get("end", 3))),  # None = whole clip
             "anim": t.get("anim") if t.get("anim") in ("none", "fade", "pop") else "fade",
         }
         for col, default in (("color", "#FFFFFF"), ("outline_color", "#000000"), ("box_color", "#000000")):
@@ -258,7 +267,7 @@ def clean_texts(texts) -> list[dict]:
             if not HEX.fullmatch(val):
                 raise ValueError("Colours must look like #RRGGBB.")
             item[col] = val
-        if item["end"] <= item["start"]:
+        if item["end"] is not None and item["end"] <= item["start"]:
             raise ValueError(f'Text "{text[:20]}" must end after it starts.')
         out.append(item)
     return out
@@ -628,6 +637,12 @@ def _append_manual_clip(run_dir, data, info, sentences, start, end, title, idx, 
         "fit": first.get("fit") or data["settings"].get("fit", "auto"),
         "captions": first.get("captions", True), "images": with_defaults(None),
     }
+    if data["settings"].get("title_overlay", True):
+        from . import titles
+
+        clip = titles.add_title(clip, sentences, info.get("title", ""), clip["aspect"],
+                                {t["text"].replace("\n", " ") for c in clips for t in c.get("texts") or []
+                                 if t.get("id") == "ttitle"})
     clips.append(clip)
     report.write_json(run_dir, info, report.clip_records(info, clips, sentences), data["settings"])
     print(f"Added clip #{rank_no}: {clip['title']} ({start:.1f}-{end:.1f}s)", flush=True)
@@ -666,10 +681,10 @@ def split_clip(run_dir: Path, rank_no: int, at: float, changes: dict | None = No
                        "speed_zones": part(second.get("speed_zones"), at, b), "cuts": part(second.get("cuts"), at, b)})
         # Text boxes are timed from the clip start: keep each on the half it shows in.
         texts = clip.get("texts") or []
-        clip["texts"] = [t for t in texts if float(t.get("start", 0)) < first_len - 0.2]
+        clip["texts"] = [t for t in texts if float(t.get("start") or 0) < first_len - 0.2]
         second["texts"] = [{**t, "start": max(0.0, float(t.get("start", 0)) - first_len),
-                            "end": max(0.5, float(t.get("end", 0)) - first_len)}
-                           for t in texts if float(t.get("end", 0)) > first_len + 0.2]
+                            "end": None if t.get("end") is None else max(0.5, float(t["end"]) - first_len)}
+                           for t in texts if t.get("end") is None or float(t["end"]) > first_len + 0.2]
         for c, lo, hi in ((clip, a, at), (second, at, b)):
             idx = [k for k, s in enumerate(sentences) if s["end"] > lo and s["start"] < hi]
             if idx:

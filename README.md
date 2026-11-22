@@ -61,6 +61,16 @@ Undo/redo (Ctrl+Z / Ctrl+Shift+Z), Space play/pause, ←/→ step, Del removes t
 - **Storage folders** - shows where finished clips and downloaded videos are stored (with space used), lets you
   pick other folders with a folder browser, and opens them in Explorer. Existing files are not moved.
 
+**✨ Catchy on-screen titles (on by default):** every new clip gets a big title for its whole length (yellow
+Impact, black outline, pops in) so viewers know right away why to keep watching. It's made offline from what's
+said in the clip - the punchiest short line in capitals ("BRO, ARE YOU KIDDING ME?") - or a curiosity line with
+the game's name ("GTA 6: THIS ESCALATED QUICKLY"); clips of one run get different titles. It sits on the seam
+between facecam and game (or in the empty band above the picture), away from captions and logos. Untick
+**Catchy title** on the main form (or `--no-title`) to skip it. In the editor, **Text > ✨ Suggest titles** offers
+more ideas (click one to use it; **Remove title** to drop it); the title box can be restyled like any text. For runs
+made before, **✨ Titles on all clips** on the run adds them. Clips you make in the full video and videos from
+Favorites get one too. (Burned-in text can't show emoji, so titles use words only.)
+
 **Your presets (★ Presets in the editor):** save a clip's whole look - layout and framing, facecam box, captions
 (style, position, sync), logos, text boxes, filters, audio, speed, progress bar, export quality and hook intro on/off -
 under a name. A preset never stores the clip's start/end, edited words or speed zones. Every **Save & render** also

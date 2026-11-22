@@ -118,6 +118,9 @@ def build(name: str, pieces: list[dict], aspect: str = "vertical", fit: str = "b
             "hook": (sentences[0]["text"] or name)[:140], "reason": f"Made in Favorites from {len(ps)} clips.",
             "score": 0.0, "signals": {}, "manual": True, "style": {"preset": style}, "aspect": aspect, "fit": fit,
             "captions": bool(captions), "images": with_defaults(None)}
+    from . import titles
+
+    clip = titles.add_title(clip, sentences, " ".join(filter(None, [p["item"].get("video_title") for p in ps]))[:300], aspect)
     settings = {"count": 1, "aspect": aspect, "fit": fit, "captions": bool(captions), "transcript_source": "montage",
                 "work_dir": str(work.dir.resolve()), "rendered": True, "montage": True}
     report.write_json(run_dir, info, report.clip_records(info, [clip], sentences), settings)

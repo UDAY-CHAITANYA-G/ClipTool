@@ -253,7 +253,7 @@ def text_events(texts: list[dict], size: tuple[int, int], out_dur: float) -> lis
             continue
         content = content.replace("\r", "").replace("\n", "\\N")
         st = max(0.0, float(t.get("start", 0)))
-        en = min(out_dur, float(t.get("end", out_dur)))
+        en = out_dur if t.get("end") is None else min(out_dur, float(t["end"]))
         if en <= st:
             continue
         x, y = float(t.get("x", 0.5)) * W, float(t.get("y", 0.15)) * H
@@ -647,8 +647,10 @@ def render_clip(source: Path, clip: dict, sentences: list[dict], out_dir: Path, 
             teaser = words_between(sentences, hs, he) if (captions and use_hook) else []
             words = ([{**w, "s": tl.out_time("hook", w["s"]), "e": tl.out_time("hook", min(w["e"], he))} for w in teaser] +
                      [{**w, "s": tl.out_time("main", w["s"]), "e": tl.out_time("main", w["e"])} for w in words])
-            texts = [{**t, "start": float(t.get("start", 0)) + hook_out, "end": float(t.get("end", 0)) + hook_out}
-                     for t in texts]
+            # Whole-clip text (no end) also shows during the hook intro.
+            texts = [{**t, "start": 0.0, "end": out_dur} if t.get("end") is None and not t.get("start") else
+                     {**t, "start": float(t.get("start") or 0) + hook_out,
+                      "end": (out_dur if t.get("end") is None else float(t["end"]) + hook_out)} for t in texts]
             ass = build_ass(words, 0.0, out_dur, SIZES[aspect], style, aspect, 1.0, texts, captions)
         else:
             ass = build_ass(words, start, start + dur, SIZES[aspect], style, aspect, speed, texts, captions)

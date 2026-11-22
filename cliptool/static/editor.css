@@ -149,6 +149,11 @@ button.danger{color:var(--bad)}
 .track .cut:hover{outline:2px solid #fff}
 .track .cutmark{position:absolute;top:-4px;bottom:-4px;width:3px;background:#ef4444;box-shadow:0 0 0 1px #fff;pointer-events:none}
 .zitem.cutitem{border-color:#ef4444}
+.topts{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.topt{text-align:left;font-family:Impact,"Arial Black",sans-serif;letter-spacing:.3px;font-size:14px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:8px;background:var(--soft);color:#FFD400;text-shadow:0 1px 0 #000}
+.topt:hover{border-color:#FFD400}
+.topt.on{border-color:#FFD400;box-shadow:0 0 0 1px #FFD400}
 .syncrow{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .syncrow button{font-size:12px;padding:4px 8px}
 .syncv{min-width:56px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}

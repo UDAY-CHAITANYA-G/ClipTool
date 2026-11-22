@@ -123,7 +123,7 @@ def changes_for_clip(settings: dict, clip: dict, sentences: list[dict], info: di
     length = float(clip["end"]) - float(clip["start"])
     if ch.get("texts"):
         ch["texts"] = [{**t, "start": min(float(t.get("start") or 0), max(0.0, length - 0.5)),
-                        "end": min(float(t.get("end") or length), length)} for t in ch["texts"]]
+                        "end": None if t.get("end") is None else min(float(t["end"]), length)} for t in ch["texts"]]
     if ch.get("fit") == "stack" and not ch.get("facecam"):
         ch.pop("facecam", None)
     if settings.get("hook_intro_auto"):
